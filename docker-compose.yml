@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: src/OddOddities.Worker/Dockerfile
+    container_name: odd-oddities-worker
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - AppConfiguration__ConnectionStrings__DefaultConnection=Host=postgres:5432;Database=odd_oddities;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Maximum Pool Size=20;Minimum Pool Size=2
+      - AppConfiguration__OpenRouter__ApiKey=${OPENROUTER_API_KEY}
+      - AppConfiguration__OpenRouter__TextModelId=${TEXT_MODEL_ID}
+      - AppConfiguration__OpenRouter__ImageModelId=${IMAGE_MODEL_ID}
+      - AppConfiguration__Meta__AppId=${META_APP_ID}
+      - AppConfiguration__Meta__AppSecret=${META_APP_SECRET}
+      - AppConfiguration__Meta__AccessToken=${META_ACCESS_TOKEN}
+      - AppConfiguration__Meta__InstagramUserId=${INSTAGRAM_USER_ID}
+      - AppConfiguration__MinIO__Endpoint=minio:9000
+      - AppConfiguration__MinIO__AccessKey=${MINIO_ACCESS_KEY}
+      - AppConfiguration__MinIO__SecretKey=${MINIO_SECRET_KEY}
+      - AppConfiguration__MinIO__BucketName=${MINIO_BUCKET_NAME}
+      - AppConfiguration__MinIO__PublicEndpoint=https://${STORAGE_DOMAIN}
+      - AppConfiguration__TokenEncryption__Key=${TOKEN_ENCRYPTION_KEY}
+      - AppConfiguration__Schedule__HourUtc=${SCHEDULE_HOUR_UTC:-17}
+      - AppConfiguration__Schedule__Timezone=${SCHEDULE_TIMEZONE:-Eastern Standard Time}
+      - AppConfiguration__Schedule__Days=${SCHEDULE_DAYS:-TUE,THU,SAT}
+      - AppConfiguration__ImageProcessing__Width=1080
+      - AppConfiguration__ImageProcessing__Height=1080
+      - AppConfiguration__ImageProcessing__Quality=85
+      - AppConfiguration__ImageProcessing__WatermarkText=Odd Oddities
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: odd-oddities-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-odd_oddities}
+      - POSTGRES_USER=${POSTGRES_USER:-odd_oddities}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-odd_oddities} -d ${POSTGRES_DB:-odd_oddities}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: odd-oddities-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:1.24-alpine
+    container_name: odd-oddities-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks:
+      - edge
+    depends_on:
+      - minio
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: odd-oddities-certbot
+    volumes:
+      - ./certs:/etc/letsencrypt
+      - ./www:/var/www/html
+    networks:
+      - edge
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge
+    name: odd-oddities-internal
+  edge:
+    driver: bridge
+    name: odd-oddities-edge
