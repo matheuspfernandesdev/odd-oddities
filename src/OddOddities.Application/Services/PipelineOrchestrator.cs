@@ -12,20 +12,21 @@ namespace OddOddities.Application.Services;
 /// </summary>
 public sealed class PipelineOrchestrator
 {
-    private const int MaxGenerationAttempts = 3;
-
     private readonly IEnumerable<IPipelineStep> _steps;
+    private readonly ICategorySelectionPort _categorySelectionPort;
     private readonly IPostRepository _postRepository;
     private readonly ILogCorrelationPort _logCorrelation;
     private readonly ILogger<PipelineOrchestrator> _logger;
 
     public PipelineOrchestrator(
         IEnumerable<IPipelineStep> steps,
+        ICategorySelectionPort categorySelectionPort,
         IPostRepository postRepository,
         ILogCorrelationPort logCorrelation,
         ILogger<PipelineOrchestrator> logger)
     {
         _steps = steps ?? throw new ArgumentNullException(nameof(steps));
+        _categorySelectionPort = categorySelectionPort ?? throw new ArgumentNullException(nameof(categorySelectionPort));
         _postRepository = postRepository ?? throw new ArgumentNullException(nameof(postRepository));
         _logCorrelation = logCorrelation ?? throw new ArgumentNullException(nameof(logCorrelation));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -35,10 +36,10 @@ public sealed class PipelineOrchestrator
     /// Executes the full pipeline: category selection, text generation, validation,
     /// image generation, upload, and publishing.
     /// </summary>
-    /// <param name="categoryId">Selected category ID.</param>
-    /// <param name="subcategoryId">Selected subcategory ID.</param>
-    /// <param name="categoryName">Selected category name.</param>
-    /// <param name="subcategoryName">Selected subcategory name.</param>
+    /// <param name="categoryId">Selected category ID (ignored, auto-selected).</param>
+    /// <param name="subcategoryId">Selected subcategory ID (ignored, auto-selected).</param>
+    /// <param name="categoryName">Selected category name (ignored, auto-selected).</param>
+    /// <param name="subcategoryName">Selected subcategory name (ignored, auto-selected).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public async Task ExecuteAsync(
         long categoryId,
@@ -49,19 +50,25 @@ public sealed class PipelineOrchestrator
     {
         var executionId = Guid.NewGuid().ToString("N");
 
+        _logger.LogInformation("Pipeline started for execution {ExecutionId}", executionId);
+
+        // Step 0: Select balanced category and subcategory (RF-06)
+        var (selectedCategory, selectedSubcategory) = await _categorySelectionPort
+            .SelectBalancedCategoryAsync(cancellationToken);
+
         var context = new PipelineExecutionContext
         {
             ExecutionId = executionId,
-            CategoryId = categoryId,
-            SubcategoryId = subcategoryId,
-            CategoryName = categoryName,
-            SubcategoryName = subcategoryName
+            CategoryId = selectedCategory.Id,
+            SubcategoryId = selectedSubcategory.Id,
+            CategoryName = selectedCategory.Name,
+            SubcategoryName = selectedSubcategory.Name
         };
 
         _logger.LogInformation(
-            "Pipeline started for category {Category}/{Subcategory}",
-            categoryName,
-            subcategoryName);
+            "Pipeline selected category {Category}/{Subcategory}",
+            selectedCategory.Name,
+            selectedSubcategory.Name);
 
         foreach (var step in _steps)
         {

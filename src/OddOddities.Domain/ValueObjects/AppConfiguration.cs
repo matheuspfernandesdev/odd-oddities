@@ -8,6 +8,11 @@ public sealed class AppConfiguration
 {
     public const string SectionName = "AppConfiguration";
 
+    /// <summary>
+    /// Maximum length for caption text content (BR-002). Default: 800 characters.
+    /// </summary>
+    public int MaxCaptionContentLength { get; set; } = 800;
+
     public ConnectionStringsConfiguration ConnectionStrings { get; set; } = new();
     public OpenRouterConfiguration OpenRouter { get; set; } = new();
     public MetaConfiguration Meta { get; set; } = new();

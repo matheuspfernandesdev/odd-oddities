@@ -93,6 +93,7 @@ public sealed class Worker : BackgroundService
 
     /// <summary>
     /// Runs the pipeline by creating a scope and resolving the PipelineOrchestrator.
+    /// The PipelineOrchestrator will handle category selection internally (RF-06).
     /// </summary>
     private async Task RunPipelineAsync(CancellationToken cancellationToken)
     {
@@ -101,8 +102,8 @@ public sealed class Worker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var pipeline = scope.ServiceProvider.GetRequiredService<PipelineOrchestrator>();
 
-        // Category selection will be done by the first pipeline step
-        // For now, execute with placeholder values - will be wired up when RF-06 is implemented
+        // The orchestrator handles category selection via ICategorySelectionPort (RF-06)
+        // Pass zero/empty values as placeholders - they will be overridden by the orchestrator
         await pipeline.ExecuteAsync(
             categoryId: 0,
             subcategoryId: 0,

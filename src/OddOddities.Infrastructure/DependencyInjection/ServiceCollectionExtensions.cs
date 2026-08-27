@@ -22,6 +22,10 @@ public static class ServiceCollectionExtensions
     {
         // Repositories (scoped: one instance per request/scope)
         services.AddScoped<IPostRepository, PostgresPostRepository>();
+        services.AddScoped<IPublicationRepository, PostgresPublicationRepository>();
+        services.AddScoped<ISystemSettingRepository, PostgresSystemSettingRepository>();
+        services.AddScoped<IGenerationAttemptRepository, PostgresGenerationAttemptRepository>();
+        services.AddScoped<IPostAuditRepository, PostgresPostAuditRepository>();
 
         // Application services
         services.AddScoped<ICategorySelectionPort, CategorySelectionService>();
@@ -69,6 +73,35 @@ public static class ServiceCollectionExtensions
         // Token renewal (RF-03, BR-010): automatic refresh before 14 days
         // Scoped: uses repository and encryption service
         services.AddScoped<ITokenRenewalPort, TokenRenewalService>();
+
+        // OpenRouter text generation (EP-02, F05): HttpClient for chat completions API
+        services.AddHttpClient<ITextGenerationPort, OpenRouterTextGenerationAdapter>(client =>
+        {
+            client.BaseAddress = new Uri("https://openrouter.ai/api/v1/");
+            client.Timeout = TimeSpan.FromSeconds(60);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
+        });
+
+        // OpenRouter image generation (EP-02, F06): HttpClient for image generation API
+        services.AddHttpClient<IImageGenerationPort, OpenRouterImageGenerationAdapter>(client =>
+        {
+            client.BaseAddress = new Uri("https://openrouter.ai/api/v1/");
+            client.Timeout = TimeSpan.FromMinutes(2);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
+        });
+
+        // Meta Graph API (EP-03, F10): HttpClient for Instagram publishing
+        services.AddHttpClient<IInstagramPublishingPort, MetaInstagramPublishingAdapter>(client =>
+        {
+            client.BaseAddress = new Uri("https://graph.facebook.com/");
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
+        });
+
+        // Pipeline steps (RF-01)
+        services.AddScoped<IPipelineStep, TextGenerationStep>();
+        services.AddScoped<IPipelineStep, ImageGenerationStep>();
+        services.AddScoped<IPipelineStep, PublicationStep>();
 
         return services;
     }
