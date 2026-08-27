@@ -46,6 +46,9 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<ISourceValidationPort, SourceValidationService>();
 
+        // Similarity checking (RF-07): ContentHash + Jaccard similarity for duplicate detection
+        services.AddScoped<ISimilarityCheckPort, SimilarityCheckService>();
+
         return services;
     }
 }
