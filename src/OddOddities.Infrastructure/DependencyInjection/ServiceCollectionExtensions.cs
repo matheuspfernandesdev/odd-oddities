@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using OddOddities.Application.Services;
 using OddOddities.Domain.Interfaces;
@@ -28,6 +29,22 @@ public static class ServiceCollectionExtensions
 
         // Logging correlation (singleton: shared across all scopes)
         services.AddSingleton<ILogCorrelationPort, LogCorrelationService>();
+
+        // Source validation (RF-08): HttpClient with 10s timeout and max 3 redirects
+        services.AddHttpClient(nameof(SourceValidationService), client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0 (SourceValidator)");
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = true,
+            MaxAutomaticRedirections = 3,
+            // Prevent credential leakage on redirects
+            UseDefaultCredentials = false
+        });
+
+        services.AddScoped<ISourceValidationPort, SourceValidationService>();
 
         return services;
     }
