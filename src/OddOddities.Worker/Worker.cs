@@ -1,26 +1,27 @@
-using Microsoft.Extensions.Options;
-using OddOddities.Domain.ValueObjects;
+using OddOddities.Application.Services;
+using OddOddities.Domain.Interfaces;
 
 namespace OddOddities.Worker;
 
 /// <summary>
 /// Background service that runs the content generation and publishing pipeline.
 /// Uses PeriodicTimer for scheduling and SemaphoreSlim for concurrency control.
+/// Implements RF-02: Agendamento de execucoes.
 /// </summary>
 public sealed class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private readonly AppConfiguration _configuration;
+    private readonly ISchedulerPort _scheduler;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     public Worker(
         ILogger<Worker> logger,
-        IOptions<AppConfiguration> configuration,
+        ISchedulerPort scheduler,
         IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
-        _configuration = configuration.Value;
+        _scheduler = scheduler;
         _scopeFactory = scopeFactory;
     }
 
@@ -28,81 +29,87 @@ public sealed class Worker : BackgroundService
     {
         _logger.LogInformation("Worker starting at {Time}", DateTimeOffset.UtcNow);
 
-        var scheduleConfig = _configuration.Schedule;
-        var days = ParseDays(scheduleConfig.Days);
-
-        using var timer = new PeriodicTimer(TimeSpan.FromHours(24), TimeProvider.System);
-
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        // Check immediately if we should run now (e.g., after restart during scheduled time)
+        if (_scheduler.ShouldRunNow())
         {
-            var now = DateTime.UtcNow;
-            var localTime = now.AddHours(-5); // Simplified UTC to ET conversion
+            await TryExecutePipelineAsync(stoppingToken);
+        }
 
-            if (ShouldRunToday(localTime, days) && localTime.Hour == scheduleConfig.HourUtc)
+        // Calculate delay to next scheduled run
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var nextRun = _scheduler.GetNextRunTime();
+            var delay = nextRun - DateTime.UtcNow;
+
+            if (delay > TimeSpan.Zero)
             {
-                if (!await _lock.WaitAsync(0, stoppingToken))
-                {
-                    _logger.LogWarning("Pipeline already running, skipping this tick");
-                    continue;
-                }
+                _logger.LogInformation(
+                    "Next pipeline run scheduled for {NextRun} UTC (in {Delay})",
+                    nextRun,
+                    delay);
 
                 try
                 {
-                    await RunPipelineAsync(stoppingToken);
+                    await Task.Delay(delay, stoppingToken);
                 }
-                catch (Exception ex)
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    _logger.LogError(ex, "Pipeline execution failed");
-                }
-                finally
-                {
-                    _lock.Release();
+                    // Normal shutdown
+                    break;
                 }
             }
+
+            // Execute pipeline if we should run now
+            await TryExecutePipelineAsync(stoppingToken);
         }
 
         _logger.LogInformation("Worker stopping at {Time}", DateTimeOffset.UtcNow);
     }
 
+    /// <summary>
+    /// Attempts to execute the pipeline, respecting the semaphore to prevent parallel execution.
+    /// </summary>
+    private async Task TryExecutePipelineAsync(CancellationToken cancellationToken)
+    {
+        if (!await _semaphore.WaitAsync(0, cancellationToken))
+        {
+            _logger.LogWarning("Pipeline already running, skipping this execution");
+            return;
+        }
+
+        try
+        {
+            await RunPipelineAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Pipeline execution failed");
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    /// <summary>
+    /// Runs the pipeline by creating a scope and resolving the PipelineOrchestrator.
+    /// </summary>
     private async Task RunPipelineAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting pipeline execution at {Time}", DateTimeOffset.UtcNow);
 
         using var scope = _scopeFactory.CreateScope();
-        // TODO: Resolve pipeline service and execute
-        // var pipeline = scope.ServiceProvider.GetRequiredService<IPipelineService>();
-        // await pipeline.ExecuteAsync(cancellationToken);
+        var pipeline = scope.ServiceProvider.GetRequiredService<PipelineOrchestrator>();
+
+        // Category selection will be done by the first pipeline step
+        // For now, execute with placeholder values - will be wired up when RF-06 is implemented
+        await pipeline.ExecuteAsync(
+            categoryId: 0,
+            subcategoryId: 0,
+            categoryName: string.Empty,
+            subcategoryName: string.Empty,
+            cancellationToken);
 
         _logger.LogInformation("Pipeline execution completed at {Time}", DateTimeOffset.UtcNow);
-    }
-
-    private static bool ShouldRunToday(DateTime localTime, HashSet<DayOfWeek> days)
-    {
-        return days.Contains(localTime.DayOfWeek);
-    }
-
-    private static HashSet<DayOfWeek> ParseDays(string daysConfig)
-    {
-        var result = new HashSet<DayOfWeek>();
-        var dayMap = new Dictionary<string, DayOfWeek>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["SUN"] = DayOfWeek.Sunday,
-            ["MON"] = DayOfWeek.Monday,
-            ["TUE"] = DayOfWeek.Tuesday,
-            ["WED"] = DayOfWeek.Wednesday,
-            ["THU"] = DayOfWeek.Thursday,
-            ["FRI"] = DayOfWeek.Friday,
-            ["SAT"] = DayOfWeek.Saturday
-        };
-
-        foreach (var day in daysConfig.Split(',', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (dayMap.TryGetValue(day.Trim(), out var dayOfWeek))
-            {
-                result.Add(dayOfWeek);
-            }
-        }
-
-        return result;
     }
 }

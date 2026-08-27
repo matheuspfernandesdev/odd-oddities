@@ -20,8 +20,11 @@ public static class ServiceCollectionExtensions
         // Repositories (scoped: one instance per request/scope)
         services.AddScoped<IPostRepository, PostgresPostRepository>();
 
-        // Application services (scoped)
+        // Application services
         services.AddScoped<ICategorySelectionPort, CategorySelectionService>();
+
+        // Schedule service (singleton: shared across all scopes, thread-safe)
+        services.AddSingleton<ISchedulerPort, ScheduleService>();
 
         // Logging correlation (singleton: shared across all scopes)
         services.AddSingleton<ILogCorrelationPort, LogCorrelationService>();
