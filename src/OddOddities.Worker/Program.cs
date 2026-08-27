@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OddOddities.Domain.ValueObjects;
 using OddOddities.Infrastructure.Data;
+using OddOddities.Infrastructure.DependencyInjection;
 using OddOddities.Worker;
 using Serilog;
 
@@ -41,6 +42,9 @@ builder.Services.AddHealthChecks()
         name: "postgresql",
         failureStatus: HealthStatus.Unhealthy,
         tags: ["db", "ready"]);
+
+// Register Infrastructure services (repositories, adapters)
+builder.Services.AddInfrastructureServices();
 
 // Add hosted service
 builder.Services.AddHostedService<Worker>();
