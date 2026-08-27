@@ -4,18 +4,27 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OddOddities.Domain.ValueObjects;
 using OddOddities.Infrastructure.Data;
 using OddOddities.Infrastructure.DependencyInjection;
+using OddOddities.Infrastructure.Logging;
 using OddOddities.Worker;
 using Serilog;
+using Serilog.Formatting.Compact;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog
+// Configure Serilog with structured logging (RF-10)
+// - Console sink with CompactJsonFormatter for stdout output
+// - Sensitive data destructuring to redact API keys, tokens, and secrets
+// - LogContext enricher for correlation properties (executionId, step, outcome, durationMs)
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithEnvironmentName()
+    .Destructure.With(new SensitiveDataDestructuringPolicy())
+    .WriteTo.Console(new CompactJsonFormatter())
     .CreateLogger();
 
-builder.Host.UseSerilog();
+builder.Host.UseSerilog(dispose: true);
 
 // Configure AppConfiguration with IOptions pattern
 builder.Services.Configure<AppConfiguration>(

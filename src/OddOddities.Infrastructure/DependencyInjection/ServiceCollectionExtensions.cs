@@ -23,6 +23,9 @@ public static class ServiceCollectionExtensions
         // Application services (scoped)
         services.AddScoped<ICategorySelectionPort, CategorySelectionService>();
 
+        // Logging correlation (singleton: shared across all scopes)
+        services.AddSingleton<ILogCorrelationPort, LogCorrelationService>();
+
         return services;
     }
 }
