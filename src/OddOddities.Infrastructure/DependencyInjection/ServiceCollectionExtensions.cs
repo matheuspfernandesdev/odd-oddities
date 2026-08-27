@@ -57,6 +57,10 @@ public static class ServiceCollectionExtensions
         // Singleton: AmazonS3Client is thread-safe and should be reused
         services.AddSingleton<IObjectStoragePort, MinioObjectStorageAdapter>();
 
+        // Presigned URL generation (RF-05): 24h validity, public HTTPS endpoint
+        // Scoped: delegates to IObjectStoragePort, no shared state
+        services.AddScoped<IPresignedUrlPort, PresignedUrlService>();
+
         return services;
     }
 }

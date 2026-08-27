@@ -102,12 +102,13 @@ public sealed class MinioObjectStorageAdapter : IObjectStoragePort, IDisposable
         // Ensure bucket exists
         await EnsureBucketExistsAsync(cancellationToken);
 
-        // Upload object
+        // Upload object (dispose MemoryStream after upload to prevent memory leak)
+        using var stream = new MemoryStream(data);
         var request = new PutObjectRequest
         {
             BucketName = _config.BucketName,
             Key = key,
-            InputStream = new MemoryStream(data),
+            InputStream = stream,
             ContentType = contentType
         };
 
@@ -122,6 +123,11 @@ public sealed class MinioObjectStorageAdapter : IObjectStoragePort, IDisposable
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Presigned URL generation is a local cryptographic operation (no network call),
+    /// so <paramref name="cancellationToken"/> is accepted for API consistency but
+    /// cannot be used to cancel the operation.
+    /// </remarks>
     public Task<string> GeneratePresignedUrlAsync(
         string key,
         TimeSpan expiry,
@@ -135,6 +141,14 @@ public sealed class MinioObjectStorageAdapter : IObjectStoragePort, IDisposable
 
         // ADR-005: Use the public endpoint client for presigned URLs.
         // This ensures the URL points to the Nginx reverse proxy with TLS.
+        if (_presignedClient is null)
+        {
+            _logger.LogWarning(
+                "PublicEndpoint is not configured. Presigned URL will use internal endpoint " +
+                "which may not be accessible by external services like Meta Graph API. " +
+                "Configure MinIO:PublicEndpoint in appsettings.json.");
+        }
+
         var client = _presignedClient ?? _s3Client;
 
         var request = new GetPreSignedUrlRequest
