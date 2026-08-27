@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using OddOddities.Application.Services;
 using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
@@ -60,6 +61,14 @@ public static class ServiceCollectionExtensions
         // Presigned URL generation (RF-05): 24h validity, public HTTPS endpoint
         // Scoped: delegates to IObjectStoragePort, no shared state
         services.AddScoped<IPresignedUrlPort, PresignedUrlService>();
+
+        // Token encryption (RF-03, ADR-006): AES-256-GCM for Meta token
+        // Singleton: stateless, key is immutable
+        services.AddSingleton<ITokenEncryptionPort, TokenEncryptionService>();
+
+        // Token renewal (RF-03, BR-010): automatic refresh before 14 days
+        // Scoped: uses repository and encryption service
+        services.AddScoped<ITokenRenewalPort, TokenRenewalService>();
 
         return services;
     }
