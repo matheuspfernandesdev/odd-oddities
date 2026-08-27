@@ -53,6 +53,10 @@ public static class ServiceCollectionExtensions
         // Image processing (RF-09): ImageSharp resize, watermark, JPEG encoding
         services.AddScoped<IImageProcessingPort, ImageSharpProcessingService>();
 
+        // Object storage (RF-04): MinIO with quota verification (BR-009)
+        // Singleton: AmazonS3Client is thread-safe and should be reused
+        services.AddSingleton<IObjectStoragePort, MinioObjectStorageAdapter>();
+
         return services;
     }
 }

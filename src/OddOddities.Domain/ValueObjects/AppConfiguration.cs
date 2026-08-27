@@ -57,6 +57,12 @@ public sealed class MinioConfiguration
     public string SecretKey { get; set; } = string.Empty;
     public string BucketName { get; set; } = "odd-oddities";
     public string PublicEndpoint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Maximum bucket size in bytes (BR-009). Default: 20 GB (21,474,836,480 bytes).
+    /// When this quota is reached, uploads are blocked.
+    /// </summary>
+    public long QuotaBytes { get; set; } = 21_474_836_480L;
 }
 
 /// <summary>
