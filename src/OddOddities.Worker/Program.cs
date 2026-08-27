@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using OddOddities.Application.Services;
+using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
 using OddOddities.Infrastructure.Data;
 using OddOddities.Infrastructure.DependencyInjection;
 using OddOddities.Infrastructure.Logging;
 using OddOddities.Worker;
+using OddOddities.Worker.Middleware;
 using Serilog;
 using Serilog.Formatting.Compact;
 
@@ -55,10 +58,17 @@ builder.Services.AddHealthChecks()
 // Register Infrastructure services (repositories, adapters)
 builder.Services.AddInfrastructureServices();
 
+// Register PipelineOrchestrator (RF-01 / RF-11)
+builder.Services.AddScoped<PipelineOrchestrator>();
+
 // Add hosted service
 builder.Services.AddHostedService<Worker>();
 
 var app = builder.Build();
+
+// Global exception handler (RF-11): captures unhandled exceptions,
+// logs structured error, returns sanitized 500 without stack trace
+app.UseMiddleware<GlobalExceptionMiddleware>();
 
 // Apply migrations on startup (RF-12: failure prevents scheduler from starting)
 using (var scope = app.Services.CreateScope())
