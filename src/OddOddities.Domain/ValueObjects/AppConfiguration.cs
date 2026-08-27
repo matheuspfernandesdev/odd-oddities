@@ -86,4 +86,5 @@ public sealed class ImageProcessingConfiguration
     public int Height { get; set; } = 1080;
     public int Quality { get; set; } = 85;
     public string WatermarkText { get; set; } = "Odd Oddities";
+    public int WatermarkFontSize { get; set; } = 24;
 }

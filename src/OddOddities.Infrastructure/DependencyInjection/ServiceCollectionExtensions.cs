@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using OddOddities.Application.Services;
 using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
 using OddOddities.Infrastructure.Adapters;
 
 namespace OddOddities.Infrastructure.DependencyInjection;
@@ -48,6 +49,9 @@ public static class ServiceCollectionExtensions
 
         // Similarity checking (RF-07): ContentHash + Jaccard similarity for duplicate detection
         services.AddScoped<ISimilarityCheckPort, SimilarityCheckService>();
+
+        // Image processing (RF-09): ImageSharp resize, watermark, JPEG encoding
+        services.AddScoped<IImageProcessingPort, ImageSharpProcessingService>();
 
         return services;
     }
