@@ -88,7 +88,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 # Requisitos Funcionais
 
-## RF-01: Pipeline de publicacao automatica
+## [x] RF-01: Pipeline de publicacao automatica
 
 **User Story:** Como dono do perfil, quero que o sistema publique tres posts por semana sem intervencao manual para manter consistencia do perfil.
 
@@ -150,7 +150,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-02: Agendamento de execucoes
+## [x] RF-02: Agendamento de execucoes
 
 **User Story:** Como dono, quero definir dias e horarios fixos para as publicacoes para atingir o publico no momento certo.
 
@@ -175,7 +175,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-03: Renovacao automatica do token Meta
+## [x] RF-03: Renovacao automatica do token Meta
 
 **User Story:** Como dono, quero que o token de longa duracao da Meta seja renovado automaticamente para evitar expiracao.
 
@@ -199,7 +199,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-04: Armazenamento permanente de imagens
+## [x] RF-04: Armazenamento permanente de imagens
 
 **User Story:** Como dono, quero manter todas as imagens permanentemente no MinIO para preservar o acervo.
 
@@ -225,7 +225,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-05: Publicacao com URL pre-assinada
+## [x] RF-05: Publicacao com URL pre-assinada
 
 **User Story:** Como dono, quero que as URLs geradas para a Meta expirem em 24 horas para reduzir superficie de ataque.
 
@@ -242,7 +242,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-06: Selecao equilibrada de categorias
+## [x] RF-06: Selecao equilibrada de categorias
 
 **User Story:** Como dono, quero que o sistema escolha categorias e subcategorias menos usadas para garantir variedade.
 
@@ -259,7 +259,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-07: Validacao de similaridade textual
+## [x] RF-07: Validacao de similaridade textual
 
 **User Story:** Como dono, quero evitar repeticoes de temas nos ultimos 90 dias para manter variedade.
 
@@ -276,7 +276,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-08: Validacao da URL de fonte
+## [x] RF-08: Validacao da URL de fonte
 
 **User Story:** Como dono, quero garantir que a URL da fonte seja valida antes de publicar.
 
@@ -294,7 +294,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-09: Processamento de imagem
+## [x] RF-09: Processamento de imagem
 
 **User Story:** Como dono, quero imagens em 1080x1080 com marca d'agua discreta para manter identidade visual.
 
@@ -312,7 +312,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-10: Logs estruturados
+## [x] RF-10: Logs estruturados
 
 **User Story:** Como dono, quero logs estruturados em JSON para facilitar analise e troubleshooting.
 
@@ -330,7 +330,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-11: Tratamento global de erros
+## [x] RF-11: Tratamento global de erros
 
 **User Story:** Como dono, quero que erros inesperados sejam capturados e registrados para evitar silenciamentos.
 
@@ -347,7 +347,7 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
-## RF-12: Migrations automaticas
+## [x] RF-12: Migrations automaticas
 
 **User Story:** Como dono, quero que as migrations do banco sejam aplicadas no startup do Worker para evitar passos manuais.
 

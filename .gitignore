@@ -399,3 +399,12 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Local secrets / env (never commit)
+.env
+.env.*
+!.env.example
+
+# TLS certificates and nginx config
+certs/
+nginx.conf
