@@ -3,10 +3,10 @@ using Microsoft.Extensions.Options;
 using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Application.UseCases;
 
 /// <summary>
-/// Implements schedule logic for pipeline execution.
+/// Implements schedule logic for pipeline execution (RF-02).
 /// Converts UTC to the configured timezone (with DST support) and determines
 /// the next run time based on configured days and hour.
 /// </summary>
@@ -24,10 +24,8 @@ public sealed class ScheduleService : ISchedulerPort
         _config = configuration.Value.Schedule;
         _logger = logger;
 
-        // Resolve timezone - supports both IANA and Windows timezone IDs
         _timeZone = TimeZoneInfo.FindSystemTimeZoneById(_config.Timezone);
 
-        // Parse configured days (TUE, THU, SAT format)
         _configuredDays = ParseDays(_config.Days);
 
         _logger.LogInformation(
@@ -43,25 +41,20 @@ public sealed class ScheduleService : ISchedulerPort
         var nowUtc = DateTime.UtcNow;
         var localNow = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, _timeZone);
 
-        // Find the next matching day
         var candidateDate = localNow.Date;
         var candidateTime = new TimeOnly(_config.HourUtc, 0);
         var candidateDateTime = candidateDate.Add(candidateTime.ToTimeSpan());
 
-        // If the candidate time is in the past or already passed today,
-        // start checking from tomorrow
         if (candidateDateTime <= localNow)
         {
             candidateDate = candidateDate.AddDays(1);
             candidateDateTime = candidateDate.Add(candidateTime.ToTimeSpan());
         }
 
-        // Find the next configured day (up to 7 days ahead)
         for (int i = 0; i < 7; i++)
         {
             if (_configuredDays.Contains(candidateDateTime.DayOfWeek))
             {
-                // Convert back to UTC
                 var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(candidateDateTime, _timeZone);
 
                 _logger.LogDebug(
@@ -77,7 +70,6 @@ public sealed class ScheduleService : ISchedulerPort
             candidateDateTime = candidateDate.Add(candidateTime.ToTimeSpan());
         }
 
-        // Fallback: should not happen with valid config, but return 24h from now
         _logger.LogWarning("Could not find next configured day within 7 days, defaulting to 24h from now");
         return nowUtc.AddHours(24);
     }
@@ -102,10 +94,6 @@ public sealed class ScheduleService : ISchedulerPort
         return isCorrectDay && isCorrectHour;
     }
 
-    /// <summary>
-    /// Parses a comma-separated string of day abbreviations (SUN, MON, TUE, etc.)
-    /// into a HashSet of DayOfWeek.
-    /// </summary>
     private static HashSet<DayOfWeek> ParseDays(string daysConfig)
     {
         var result = new HashSet<DayOfWeek>();

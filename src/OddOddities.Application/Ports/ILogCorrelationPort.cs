@@ -1,4 +1,4 @@
-namespace OddOddities.Domain.Interfaces;
+namespace OddOddities.Application.Ports;
 
 /// <summary>
 /// Port for managing log correlation context (executionId, step, outcome, durationMs).

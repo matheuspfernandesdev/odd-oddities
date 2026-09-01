@@ -9,10 +9,10 @@ using SixLabors.ImageSharp.Processing;
 using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Infrastructure.Adapters;
 
 /// <summary>
-/// Image processing service implementing RF-09 using SixLabors.ImageSharp.
+/// Image processing adapter implementing RF-09 using SixLabors.ImageSharp.
 /// Handles decoding, resizing (1080x1080 with center crop), watermarking, and JPEG encoding.
 /// </summary>
 public sealed class ImageSharpProcessingService : IImageProcessingPort
@@ -49,7 +49,6 @@ public sealed class ImageSharpProcessingService : IImageProcessingPort
             image.Width,
             image.Height);
 
-        // 1. Resize to 1080x1080 with center crop (maintains aspect ratio)
         var targetSize = new Size(_config.Width, _config.Height);
         image.Mutate(x => x.Resize(new ResizeOptions
         {
@@ -63,12 +62,10 @@ public sealed class ImageSharpProcessingService : IImageProcessingPort
             image.Width,
             image.Height);
 
-        // 2. Add watermark
         AddWatermark(image);
 
         _logger.LogDebug("Watermark applied");
 
-        // 3. Save as JPEG with configured quality
         using var outputStream = new MemoryStream();
         await image.SaveAsJpegAsync(
             outputStream,
@@ -93,9 +90,6 @@ public sealed class ImageSharpProcessingService : IImageProcessingPort
         };
     }
 
-    /// <summary>
-    /// Adds a semi-transparent white watermark text to the bottom-right corner of the image.
-    /// </summary>
     private void AddWatermark(Image<Rgba32> image)
     {
         var font = SystemFonts.CreateFont("Arial", _config.WatermarkFontSize, FontStyle.Regular);
@@ -109,7 +103,6 @@ public sealed class ImageSharpProcessingService : IImageProcessingPort
             VerticalAlignment = VerticalAlignment.Bottom
         };
 
-        // Semi-transparent white (alpha = 180/255 ≈ 70% opacity)
         var brush = Brushes.Solid(Color.White.WithAlpha(0.7f));
 
         image.Mutate(ctx => ctx.Paint(canvas =>

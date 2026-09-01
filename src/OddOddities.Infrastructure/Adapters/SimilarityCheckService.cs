@@ -2,10 +2,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using OddOddities.Domain.Constants;
 using OddOddities.Domain.Entities;
 using OddOddities.Domain.Interfaces;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Infrastructure.Adapters;
 
 /// <summary>
 /// Service for textual similarity checking (RF-07).
@@ -17,20 +18,8 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
     private readonly IPostRepository _postRepository;
     private readonly ILogger<SimilarityCheckService> _logger;
 
-    /// <summary>
-    /// Regex pattern for removing common punctuation from normalized text.
-    /// </summary>
     private static readonly Regex PunctuationRegex = new(@"[.,!?;:'""()\[\]{}\-_\\/]", RegexOptions.Compiled);
-
-    /// <summary>
-    /// Regex pattern for collapsing multiple whitespace into a single space.
-    /// </summary>
     private static readonly Regex MultiSpaceRegex = new(@"\s+", RegexOptions.Compiled);
-
-    /// <summary>
-    /// Minimum token length for Jaccard similarity (ignore words shorter than 3 chars).
-    /// </summary>
-    private const int MinTokenLength = 3;
 
     public SimilarityCheckService(
         IPostRepository postRepository,
@@ -46,7 +35,6 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
         if (string.IsNullOrWhiteSpace(textContent))
             return string.Empty;
 
-        // Normalize: lowercase, remove punctuation, collapse whitespace, trim
         var normalized = textContent
             .ToLowerInvariant()
             .Normalize(NormalizationForm.FormC);
@@ -54,7 +42,6 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
         normalized = PunctuationRegex.Replace(normalized, string.Empty);
         normalized = MultiSpaceRegex.Replace(normalized, " ").Trim();
 
-        // Compute SHA-256
         using var sha256 = SHA256.Create();
         var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(normalized));
         return Convert.ToHexString(hashBytes).ToLowerInvariant();
@@ -88,13 +75,14 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
 
         _logger.LogDebug("Checking ContentHash duplicate: {ContentHash}", contentHash);
 
-        var exists = await _postRepository.ExistsByContentHashAsync(contentHash, days: 90, cancellationToken);
+        var exists = await _postRepository.ExistsByContentHashAsync(contentHash, PipelineConstants.DuplicateDetectionWindowDays, cancellationToken);
 
         if (exists)
         {
             _logger.LogWarning(
-                "ContentHash duplicate detected: {ContentHash} exists in a published Post from the last 90 days",
-                contentHash);
+                "ContentHash duplicate detected: {ContentHash} exists in a published Post from the last {Days} days",
+                contentHash,
+                PipelineConstants.DuplicateDetectionWindowDays);
         }
 
         return exists;
@@ -117,7 +105,7 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
         var similarPosts = await _postRepository.SearchBySummarySimilarityAsync(
             summary,
             threshold,
-            days: 90,
+            PipelineConstants.SimilaritySearchWindowDays,
             cancellationToken);
 
         if (similarPosts.Count > 0)
@@ -148,13 +136,11 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
             contentHash,
             summary?.Length ?? 0);
 
-        // Check 1: ContentHash duplicate (BR-004)
         var isHashDuplicate = await IsContentHashDuplicateAsync(contentHash, cancellationToken);
 
-        // Check 2: Summary similarity (BR-005)
         var isSimilar = string.IsNullOrWhiteSpace(summary)
             ? false
-            : await IsSummarySimilarAsync(summary, threshold: 0.80, cancellationToken);
+            : await IsSummarySimilarAsync(summary, PipelineConstants.DefaultSimilarityThreshold, cancellationToken);
 
         var result = (isHashDuplicate, isSimilar) switch
         {
@@ -173,10 +159,6 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
         return result;
     }
 
-    /// <summary>
-    /// Tokenizes text into a set of normalized tokens for Jaccard similarity.
-    /// Lowercases, splits on whitespace, trims punctuation from edges, filters short tokens.
-    /// </summary>
     private static HashSet<string> Tokenize(string text)
     {
         var tokens = text
@@ -184,7 +166,7 @@ public sealed class SimilarityCheckService : ISimilarityCheckPort
             .Normalize(NormalizationForm.FormC)
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(t => t.Trim('.', ',', '!', '?', ';', ':', '"', '\'', '(', ')', '[', ']', '{', '}'))
-            .Where(t => t.Length >= MinTokenLength);
+            .Where(t => t.Length >= SimilarityConstants.MinTokenLength);
 
         return new HashSet<string>(tokens);
     }

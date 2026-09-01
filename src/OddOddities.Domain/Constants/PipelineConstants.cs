@@ -1,44 +1,91 @@
 namespace OddOddities.Domain.Constants;
 
 /// <summary>
-/// Centralized constants used by the content pipeline.
-/// Values are extracted (not changed) from their original locations to provide
-/// a single, predictable place for pipeline-wide tuning parameters.
+/// Pipeline-related constants. Centralized so that magic numbers don't drift
+/// across steps and orchestrator.
 /// </summary>
 public static class PipelineConstants
 {
     /// <summary>
-    /// Maximum number of text generation attempts per pipeline execution (BR-006).
+    /// Maximum number of text generation attempts per pipeline run (BR-006).
     /// </summary>
     public const int MaxGenerationAttempts = 3;
 
     /// <summary>
-    /// Maximum number of polling attempts when waiting for Meta to publish media.
+    /// Maximum number of polling attempts when checking Instagram publication status.
     /// </summary>
     public const int MaxPollingAttempts = 30;
 
     /// <summary>
-    /// Interval in seconds between Meta media status polls.
+    /// Polling interval in seconds between Instagram status checks.
     /// </summary>
     public const int PollingIntervalSeconds = 2;
 
     /// <summary>
-    /// Threshold in days before Meta token expiry that triggers renewal (BR-010).
-    /// </summary>
-    public const int RenewalThresholdDays = 14;
-
-    /// <summary>
-    /// Default Jaccard similarity threshold for textual duplicate detection (BR-005).
+    /// Default similarity threshold for textual content (BR-005).
     /// </summary>
     public const double DefaultSimilarityThreshold = 0.80;
 
     /// <summary>
-    /// Window in days used to look back for similar/duplicate content (BR-004, BR-005).
+    /// Window in days for the "least used category" rotation (RF-06).
     /// </summary>
-    public const int PostCategoryWindowDays = 90;
+    public const int DefaultCategoryRotationWindowDays = 90;
 
     /// <summary>
-    /// Minimum token length used by the Jaccard tokenizer (drops words shorter than this).
+    /// Window in days for ContentHash duplicate detection (BR-004).
+    /// </summary>
+    public const int DuplicateDetectionWindowDays = 90;
+
+    /// <summary>
+    /// Window in days for similarity search (BR-005).
+    /// </summary>
+    public const int SimilaritySearchWindowDays = 90;
+}
+
+/// <summary>
+/// Storage / object-storage constants.
+/// </summary>
+public static class StorageConstants
+{
+    /// <summary>
+    /// Default MinIO quota in bytes (BR-009). 20 GB.
+    /// </summary>
+    public const long MinioDefaultQuotaBytes = 21_474_836_480L;
+
+    /// <summary>
+    /// Presigned URL validity in hours (RF-05).
+    /// </summary>
+    public const int PresignedUrlExpiryHours = 24;
+}
+
+/// <summary>
+/// Token / Meta API constants.
+/// </summary>
+public static class TokenConstants
+{
+    /// <summary>
+    /// Threshold in days before expiry to trigger Meta token renewal (BR-010).
+    /// </summary>
+    public const int RenewalThresholdDays = 14;
+
+    /// <summary>
+    /// SystemSetting key for the encrypted Meta access token.
+    /// </summary>
+    public const string MetaTokenKey = "META_ACCESS_TOKEN";
+
+    /// <summary>
+    /// SystemSetting key for the Meta token expiry date.
+    /// </summary>
+    public const string MetaTokenExpiresAtKey = "META_TOKEN_EXPIRES_AT";
+}
+
+/// <summary>
+/// Similarity computation constants.
+/// </summary>
+public static class SimilarityConstants
+{
+    /// <summary>
+    /// Minimum token length considered for Jaccard similarity (ignore words shorter than 3 chars).
     /// </summary>
     public const int MinTokenLength = 3;
 }

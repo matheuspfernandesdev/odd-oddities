@@ -2,21 +2,22 @@ using Microsoft.Extensions.Logging;
 using OddOddities.Domain.Entities;
 using OddOddities.Domain.Interfaces;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Application.UseCases;
 
 /// <summary>
-/// Service for balanced category and subcategory selection.
-/// Implements RF-06: Selects the least used category and subcategory
-/// from the last 90 days to ensure content variety.
+/// Use case for balanced category and subcategory selection (RF-06).
+/// Selects the least used category and subcategory from the last
+/// <see cref="OddOddities.Domain.Constants.PipelineConstants.DefaultCategoryRotationWindowDays"/> days
+/// to ensure content variety.
 /// </summary>
-public sealed class CategorySelectionService : ICategorySelectionPort
+public sealed class SelectBalancedCategoryUseCase : ICategorySelectionPort
 {
     private readonly IPostRepository _postRepository;
-    private readonly ILogger<CategorySelectionService> _logger;
+    private readonly ILogger<SelectBalancedCategoryUseCase> _logger;
 
-    public CategorySelectionService(
+    public SelectBalancedCategoryUseCase(
         IPostRepository postRepository,
-        ILogger<CategorySelectionService> logger)
+        ILogger<SelectBalancedCategoryUseCase> logger)
     {
         _postRepository = postRepository ?? throw new ArgumentNullException(nameof(postRepository));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));

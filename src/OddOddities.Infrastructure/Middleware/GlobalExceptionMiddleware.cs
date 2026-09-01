@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
-using OddOddities.Domain.Interfaces;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using OddOddities.Application.Ports;
 
-namespace OddOddities.Worker.Middleware;
+namespace OddOddities.Infrastructure.Middleware;
 
 /// <summary>
 /// Global exception middleware that captures any unhandled exception in the HTTP pipeline.
@@ -43,7 +45,6 @@ public sealed class GlobalExceptionMiddleware
             var executionId = Guid.NewGuid().ToString("N");
             var traceId = Activity.Current?.Id ?? context.TraceIdentifier;
 
-            // Structured log with executionId, step, outcome (RF-10 / RF-11)
             using (_logCorrelation.PushCorrelation(executionId, "UnhandledException", "Failed", 0))
             {
                 _logger.LogError(ex,
@@ -52,7 +53,6 @@ public sealed class GlobalExceptionMiddleware
                     traceId);
             }
 
-            // Return sanitized 500 without exposing stack trace (RF-11.3)
             if (!context.Response.HasStarted)
             {
                 context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
@@ -64,7 +64,8 @@ public sealed class GlobalExceptionMiddleware
                     traceId
                 };
 
-                await context.Response.WriteAsJsonAsync(response, JsonOptions);
+                var json = JsonSerializer.Serialize(response, JsonOptions);
+                await context.Response.WriteAsync(json);
             }
             else
             {

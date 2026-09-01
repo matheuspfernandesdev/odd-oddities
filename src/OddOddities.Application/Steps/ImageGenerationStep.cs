@@ -1,8 +1,10 @@
 using Microsoft.Extensions.Logging;
+using OddOddities.Application.Pipeline;
+using OddOddities.Domain.Constants;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Interfaces;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Application.Steps;
 
 /// <summary>
 /// Pipeline step for image generation, processing, and storage (RF-01).
@@ -36,26 +38,27 @@ public sealed class ImageGenerationStep : IPipelineStep
 
     /// <inheritdoc />
     public async Task<StepResult> ExecuteAsync(
-        PipelineExecutionContext context,
+        PipelineContext context,
         CancellationToken cancellationToken = default)
     {
+        var text = context.Text
+            ?? throw new InvalidOperationException("ImageGenerationStep requires a Text context.");
+
         _logger.LogInformation(
             "Starting image generation for PostId={PostId}, theme={Theme}",
-            context.PostId,
-            context.Theme);
+            text.PostId,
+            text.Theme);
 
         try
         {
-            // 1. Generate image via OpenRouter
             var imageData = await _imageGenerationPort.GenerateImageAsync(
-                context.Theme,
+                text.Theme,
                 cancellationToken);
 
             _logger.LogInformation(
                 "Image generated: {SizeBytes} bytes",
                 imageData.Length);
 
-            // 2. Process image (resize, watermark, JPEG encoding)
             var processed = await _imageProcessingPort.ProcessImageAsync(
                 imageData,
                 cancellationToken);
@@ -66,9 +69,8 @@ public sealed class ImageGenerationStep : IPipelineStep
                 processed.Height,
                 processed.Format);
 
-            // 3. Check quota before upload (BR-009)
             var currentUsage = await _objectStoragePort.GetBucketUsageBytesAsync(cancellationToken);
-            var quotaBytes = 21_474_836_480L; // 20 GB
+            var quotaBytes = StorageConstants.MinioDefaultQuotaBytes;
             var newTotal = currentUsage + processed.ImageData.Length;
 
             if (newTotal > quotaBytes)
@@ -80,12 +82,11 @@ public sealed class ImageGenerationStep : IPipelineStep
                     quotaBytes);
 
                 return StepResult.Failure(
-                    FailureStep.ImageStorage.ToString(),
+                    FailureStep.ImageStorage,
                     $"MinIO quota exceeded: {newTotal} bytes would exceed {quotaBytes} bytes limit",
                     "QUOTA_EXCEEDED");
             }
 
-            // 4. Upload to MinIO
             var objectKey = Guid.NewGuid().ToString("N");
             await _objectStoragePort.PutObjectAsync(
                 objectKey,
@@ -98,14 +99,13 @@ public sealed class ImageGenerationStep : IPipelineStep
                 objectKey,
                 processed.ImageData.Length);
 
-            // 5. Update Post with image metadata
-            var post = await _postRepository.GetByIdAsync(context.PostId, cancellationToken);
+            var post = await _postRepository.GetByIdAsync(text.PostId, cancellationToken);
             if (post is null)
             {
-                _logger.LogError("Post {PostId} not found when updating image metadata", context.PostId);
+                _logger.LogError("Post {PostId} not found when updating image metadata", text.PostId);
                 return StepResult.Failure(
-                    FailureStep.ImageStorage.ToString(),
-                    $"Post {context.PostId} not found",
+                    FailureStep.ImageStorage,
+                    $"Post {text.PostId} not found",
                     "POST_NOT_FOUND");
             }
 
@@ -118,11 +118,15 @@ public sealed class ImageGenerationStep : IPipelineStep
 
             await _postRepository.UpdateAsync(post, cancellationToken);
 
-            context.ImageObjectKey = objectKey;
+            context.Image = new ImageContext(
+                ImageObjectKey: objectKey,
+                Width: processed.Width,
+                Height: processed.Height,
+                Bytes: processed.ImageData.Length);
 
             _logger.LogInformation(
                 "Image generation completed successfully: PostId={PostId}, key={ObjectKey}",
-                context.PostId,
+                text.PostId,
                 objectKey);
 
             return StepResult.Success();
@@ -132,10 +136,10 @@ public sealed class ImageGenerationStep : IPipelineStep
             _logger.LogError(
                 ex,
                 "Image generation failed for PostId={PostId}",
-                context.PostId);
+                text.PostId);
 
             return StepResult.Failure(
-                FailureStep.ImageGeneration.ToString(),
+                FailureStep.ImageGeneration,
                 $"Image generation failed: {ex.Message}",
                 ex.GetType().Name);
         }

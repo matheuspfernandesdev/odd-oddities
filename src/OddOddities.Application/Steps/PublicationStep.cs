@@ -1,9 +1,11 @@
 using Microsoft.Extensions.Logging;
+using OddOddities.Application.Pipeline;
+using OddOddities.Domain.Constants;
 using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Interfaces;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Application.Steps;
 
 /// <summary>
 /// Pipeline step for publishing to Instagram via Meta Graph API (RF-01).
@@ -18,9 +20,6 @@ public sealed class PublicationStep : IPipelineStep
     private readonly IPostRepository _postRepository;
     private readonly IPublicationRepository _publicationRepository;
     private readonly ILogger<PublicationStep> _logger;
-
-    private const int MaxPollingAttempts = 30;
-    private const int PollingIntervalSeconds = 2;
 
     public string StepName => "InstagramApi";
 
@@ -40,32 +39,35 @@ public sealed class PublicationStep : IPipelineStep
 
     /// <inheritdoc />
     public async Task<StepResult> ExecuteAsync(
-        PipelineExecutionContext context,
+        PipelineContext context,
         CancellationToken cancellationToken = default)
     {
+        var text = context.Text
+            ?? throw new InvalidOperationException("PublicationStep requires a Text context.");
+        var image = context.Image
+            ?? throw new InvalidOperationException("PublicationStep requires an Image context.");
+
         _logger.LogInformation(
             "Starting publication for PostId={PostId}",
-            context.PostId);
+            text.PostId);
 
         try
         {
-            // 1. Generate presigned URL (RF-05: 24h validity)
             var presignedUrl = await _presignedUrlPort.GeneratePresignedUrlAsync(
-                context.ImageObjectKey,
+                image.ImageObjectKey,
                 cancellationToken);
 
             _logger.LogInformation(
                 "Presigned URL generated for PostId={PostId}",
-                context.PostId);
+                text.PostId);
 
-            // 2. Create media container on Meta
-            var post = await _postRepository.GetByIdAsync(context.PostId, cancellationToken);
+            var post = await _postRepository.GetByIdAsync(text.PostId, cancellationToken);
             if (post is null)
             {
-                _logger.LogError("Post {PostId} not found for publication", context.PostId);
+                _logger.LogError("Post {PostId} not found for publication", text.PostId);
                 return StepResult.Failure(
-                    FailureStep.InstagramApi.ToString(),
-                    $"Post {context.PostId} not found",
+                    FailureStep.InstagramApi,
+                    $"Post {text.PostId} not found",
                     "POST_NOT_FOUND");
             }
 
@@ -78,7 +80,6 @@ public sealed class PublicationStep : IPipelineStep
                 "Media container created: mediaId={MediaId}",
                 mediaId);
 
-            // 3. Publish media
             var publishResult = await _instagramPublishingPort.PublishMediaAsync(
                 mediaId,
                 cancellationToken);
@@ -87,19 +88,18 @@ public sealed class PublicationStep : IPipelineStep
                 "Media published: mediaId={MediaId}",
                 publishResult);
 
-            // 4. Poll for status until Published/Error
             var publication = new Publication
             {
-                PostId = context.PostId,
+                PostId = text.PostId,
                 MetaMediaId = publishResult,
                 MetaMediaStatus = "PENDING",
                 MetaMediaStatusCode = "PENDING",
                 AttemptCount = 1
             };
 
-            for (var attempt = 0; attempt < MaxPollingAttempts; attempt++)
+            for (var attempt = 0; attempt < PipelineConstants.MaxPollingAttempts; attempt++)
             {
-                await Task.Delay(TimeSpan.FromSeconds(PollingIntervalSeconds), cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(PipelineConstants.PollingIntervalSeconds), cancellationToken);
 
                 var status = await _instagramPublishingPort.GetMediaStatusAsync(
                     publishResult,
@@ -117,7 +117,6 @@ public sealed class PublicationStep : IPipelineStep
 
                 if (status.StatusCode == "PUBLISHED")
                 {
-                    // Success: update Post status and persist Publication
                     post.Status = PostStatus.Published;
                     post.PublishedAt = DateTime.UtcNow;
                     post.UpdatedAt = DateTime.UtcNow;
@@ -129,9 +128,15 @@ public sealed class PublicationStep : IPipelineStep
 
                     await _publicationRepository.CreateAsync(publication, cancellationToken);
 
+                    context.Publication = new PublicationContext(
+                        MetaMediaId: publishResult,
+                        MetaPermalink: status.Permalink,
+                        MetaMediaStatus: status.Status,
+                        MetaMediaStatusCode: status.StatusCode);
+
                     _logger.LogInformation(
                         "Publication completed successfully: PostId={PostId}, mediaId={MediaId}",
-                        context.PostId,
+                        text.PostId,
                         publishResult);
 
                     return StepResult.Success();
@@ -141,9 +146,8 @@ public sealed class PublicationStep : IPipelineStep
                 {
                     _logger.LogWarning(
                         "Publication failed with status ERROR: PostId={PostId}",
-                        context.PostId);
+                        text.PostId);
 
-                    // Persist failed publication
                     publication.MetaMediaStatus = "ERROR";
                     publication.MetaMediaStatusCode = "ERROR";
                     publication.UpdatedAt = DateTime.UtcNow;
@@ -151,17 +155,16 @@ public sealed class PublicationStep : IPipelineStep
                     await _publicationRepository.CreateAsync(publication, cancellationToken);
 
                     return StepResult.Failure(
-                        FailureStep.InstagramApi.ToString(),
+                        FailureStep.InstagramApi,
                         $"Publication failed with status: {status.StatusCode}",
                         "PUBLICATION_FAILED");
                 }
             }
 
-            // Polling timeout
             _logger.LogWarning(
                 "Polling timeout after {MaxAttempts} attempts: PostId={PostId}",
-                MaxPollingAttempts,
-                context.PostId);
+                PipelineConstants.MaxPollingAttempts,
+                text.PostId);
 
             publication.MetaMediaStatus = "TIMEOUT";
             publication.MetaMediaStatusCode = "TIMEOUT";
@@ -170,8 +173,8 @@ public sealed class PublicationStep : IPipelineStep
             await _publicationRepository.CreateAsync(publication, cancellationToken);
 
             return StepResult.Failure(
-                FailureStep.InstagramApi.ToString(),
-                $"Polling timeout after {MaxPollingAttempts} attempts",
+                FailureStep.InstagramApi,
+                $"Polling timeout after {PipelineConstants.MaxPollingAttempts} attempts",
                 "POLLING_TIMEOUT");
         }
         catch (Exception ex)
@@ -179,10 +182,10 @@ public sealed class PublicationStep : IPipelineStep
             _logger.LogError(
                 ex,
                 "Publication failed for PostId={PostId}",
-                context.PostId);
+                text.PostId);
 
             return StepResult.Failure(
-                FailureStep.InstagramApi.ToString(),
+                FailureStep.InstagramApi,
                 $"Publication failed: {ex.Message}",
                 ex.GetType().Name);
         }

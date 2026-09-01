@@ -1,5 +1,9 @@
-using OddOddities.Application.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using OddOddities.Application.Abstractions;
+using OddOddities.Application.Pipeline;
 using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.Worker;
 
@@ -13,33 +17,34 @@ public sealed class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly ISchedulerPort _scheduler;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IClock _clock;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     public Worker(
         ILogger<Worker> logger,
         ISchedulerPort scheduler,
-        IServiceScopeFactory scopeFactory)
+        IServiceScopeFactory scopeFactory,
+        IClock clock)
     {
         _logger = logger;
         _scheduler = scheduler;
         _scopeFactory = scopeFactory;
+        _clock = clock;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Worker starting at {Time}", DateTimeOffset.UtcNow);
+        _logger.LogInformation("Worker starting at {Time}", _clock.UtcNow);
 
-        // Check immediately if we should run now (e.g., after restart during scheduled time)
         if (_scheduler.ShouldRunNow())
         {
             await TryExecutePipelineAsync(stoppingToken);
         }
 
-        // Calculate delay to next scheduled run
         while (!stoppingToken.IsCancellationRequested)
         {
             var nextRun = _scheduler.GetNextRunTime();
-            var delay = nextRun - DateTime.UtcNow;
+            var delay = nextRun - _clock.UtcNow;
 
             if (delay > TimeSpan.Zero)
             {
@@ -54,21 +59,16 @@ public sealed class Worker : BackgroundService
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    // Normal shutdown
                     break;
                 }
             }
 
-            // Execute pipeline if we should run now
             await TryExecutePipelineAsync(stoppingToken);
         }
 
-        _logger.LogInformation("Worker stopping at {Time}", DateTimeOffset.UtcNow);
+        _logger.LogInformation("Worker stopping at {Time}", _clock.UtcNow);
     }
 
-    /// <summary>
-    /// Attempts to execute the pipeline, respecting the semaphore to prevent parallel execution.
-    /// </summary>
     private async Task TryExecutePipelineAsync(CancellationToken cancellationToken)
     {
         if (!await _semaphore.WaitAsync(0, cancellationToken))
@@ -91,26 +91,14 @@ public sealed class Worker : BackgroundService
         }
     }
 
-    /// <summary>
-    /// Runs the pipeline by creating a scope and resolving the PipelineOrchestrator.
-    /// The PipelineOrchestrator will handle category selection internally (RF-06).
-    /// </summary>
     private async Task RunPipelineAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Starting pipeline execution at {Time}", DateTimeOffset.UtcNow);
+        _logger.LogInformation("Starting pipeline execution at {Time}", _clock.UtcNow);
 
         using var scope = _scopeFactory.CreateScope();
         var pipeline = scope.ServiceProvider.GetRequiredService<PipelineOrchestrator>();
+        await pipeline.ExecuteAsync(cancellationToken);
 
-        // The orchestrator handles category selection via ICategorySelectionPort (RF-06)
-        // Pass zero/empty values as placeholders - they will be overridden by the orchestrator
-        await pipeline.ExecuteAsync(
-            categoryId: 0,
-            subcategoryId: 0,
-            categoryName: string.Empty,
-            subcategoryName: string.Empty,
-            cancellationToken);
-
-        _logger.LogInformation("Pipeline execution completed at {Time}", DateTimeOffset.UtcNow);
+        _logger.LogInformation("Pipeline execution completed at {Time}", _clock.UtcNow);
     }
 }

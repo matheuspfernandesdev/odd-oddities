@@ -1,12 +1,14 @@
 using Microsoft.Extensions.Logging;
 using OddOddities.Application.DTOs;
+using OddOddities.Domain.Constants;
 using OddOddities.Domain.Interfaces;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Infrastructure.Adapters;
 
 /// <summary>
 /// Application service for automatic Meta token renewal (RF-03, BR-010).
-/// Checks token expiry and refreshes via Meta Graph API when less than 14 days remain.
+/// Checks token expiry and refreshes via Meta Graph API when less than
+/// <see cref="TokenConstants.RenewalThresholdDays"/> days remain.
 /// The new token is encrypted with AES-256-GCM and persisted in SystemSettings.
 /// </summary>
 public sealed class TokenRenewalService : ITokenRenewalPort
@@ -15,21 +17,6 @@ public sealed class TokenRenewalService : ITokenRenewalPort
     private readonly ITokenEncryptionPort _encryptionService;
     private readonly IInstagramPublishingPort _instagramPort;
     private readonly ILogger<TokenRenewalService> _logger;
-
-    /// <summary>
-    /// Threshold in days before expiry to trigger renewal (BR-010).
-    /// </summary>
-    private const int RenewalThresholdDays = 14;
-
-    /// <summary>
-    /// SystemSetting key for the encrypted Meta access token.
-    /// </summary>
-    private const string TokenKey = "META_ACCESS_TOKEN";
-
-    /// <summary>
-    /// SystemSetting key for the token expiry date.
-    /// </summary>
-    private const string ExpiresAtKey = "META_TOKEN_EXPIRES_AT";
 
     public TokenRenewalService(
         ISystemSettingRepository repository,
@@ -48,9 +35,8 @@ public sealed class TokenRenewalService : ITokenRenewalPort
     {
         _logger.LogInformation("Checking Meta token expiry status");
 
-        // 1. Fetch current token and expiry from SystemSettings
-        var tokenSetting = await _repository.GetByIdAsync(TokenKey, cancellationToken);
-        var expiresAtSetting = await _repository.GetByIdAsync(ExpiresAtKey, cancellationToken);
+        var tokenSetting = await _repository.GetByIdAsync(TokenConstants.MetaTokenKey, cancellationToken);
+        var expiresAtSetting = await _repository.GetByIdAsync(TokenConstants.MetaTokenExpiresAtKey, cancellationToken);
 
         if (tokenSetting == null || expiresAtSetting == null)
         {
@@ -61,7 +47,6 @@ public sealed class TokenRenewalService : ITokenRenewalPort
             return false;
         }
 
-        // 2. Parse expiry date and check threshold
         if (!DateTime.TryParse(expiresAtSetting.Value, out var expiresAt))
         {
             _logger.LogError(
@@ -72,12 +57,12 @@ public sealed class TokenRenewalService : ITokenRenewalPort
 
         var daysUntilExpiry = (expiresAt - DateTime.UtcNow).TotalDays;
 
-        if (daysUntilExpiry > RenewalThresholdDays)
+        if (daysUntilExpiry > TokenConstants.RenewalThresholdDays)
         {
             _logger.LogInformation(
                 "Meta token still valid for {DaysUntilExpiry:F1} days (threshold: {Threshold} days)",
                 daysUntilExpiry,
-                RenewalThresholdDays);
+                TokenConstants.RenewalThresholdDays);
             return false;
         }
 
@@ -85,7 +70,6 @@ public sealed class TokenRenewalService : ITokenRenewalPort
             "Meta token expires in {DaysUntilExpiry:F1} days, initiating renewal",
             daysUntilExpiry);
 
-        // 3. Decrypt current token and call refresh endpoint
         var decryptedToken = _encryptionService.Decrypt(tokenSetting.Value);
 
         var newToken = await _instagramPort.RefreshAccessTokenAsync(decryptedToken, cancellationToken);
@@ -96,13 +80,12 @@ public sealed class TokenRenewalService : ITokenRenewalPort
             return false;
         }
 
-        // 4. Encrypt and persist new token
         var encryptedNewToken = _encryptionService.Encrypt(newToken.NewToken);
 
         await _repository.UpsertAsync(
             new Domain.Entities.SystemSetting
             {
-                Key = TokenKey,
+                Key = TokenConstants.MetaTokenKey,
                 Value = encryptedNewToken,
                 IsEncrypted = true,
                 Description = "Meta Graph API access token (AES-256-GCM encrypted)",
@@ -113,7 +96,7 @@ public sealed class TokenRenewalService : ITokenRenewalPort
         await _repository.UpsertAsync(
             new Domain.Entities.SystemSetting
             {
-                Key = ExpiresAtKey,
+                Key = TokenConstants.MetaTokenExpiresAtKey,
                 Value = newToken.ExpiresAt.ToString("O"),
                 IsEncrypted = false,
                 Description = "Meta token expiry date (ISO 8601 UTC)",

@@ -1,7 +1,7 @@
-using OddOddities.Domain.Interfaces;
+using OddOddities.Application.Ports;
 using Serilog.Context;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Infrastructure.Logging;
 
 /// <summary>
 /// Implements log correlation by pushing execution context properties onto Serilog's LogContext.
@@ -25,9 +25,6 @@ public sealed class LogCorrelationService : ILogCorrelationPort
         return new CompositeDisposable(disposable1, disposable2, disposable3, disposable4);
     }
 
-    /// <summary>
-    /// Combines multiple disposables into a single disposable.
-    /// </summary>
     private sealed class CompositeDisposable : IDisposable
     {
         private readonly IDisposable[] _disposables;

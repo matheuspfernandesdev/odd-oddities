@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Logging;
-using OddOddities.Domain.Entities;
+using OddOddities.Application.Ports;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Interfaces;
 
-namespace OddOddities.Application.Services;
+namespace OddOddities.Application.Pipeline;
 
 /// <summary>
 /// Orchestrates the content pipeline (RF-01) with step-level error handling (RF-11).
@@ -36,34 +36,19 @@ public sealed class PipelineOrchestrator
     /// Executes the full pipeline: category selection, text generation, validation,
     /// image generation, upload, and publishing.
     /// </summary>
-    /// <param name="categoryId">Selected category ID (ignored, auto-selected).</param>
-    /// <param name="subcategoryId">Selected subcategory ID (ignored, auto-selected).</param>
-    /// <param name="categoryName">Selected category name (ignored, auto-selected).</param>
-    /// <param name="subcategoryName">Selected subcategory name (ignored, auto-selected).</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task ExecuteAsync(
-        long categoryId,
-        long subcategoryId,
-        string categoryName,
-        string subcategoryName,
-        CancellationToken cancellationToken = default)
+    public async Task ExecuteAsync(CancellationToken cancellationToken = default)
     {
         var executionId = Guid.NewGuid().ToString("N");
 
         _logger.LogInformation("Pipeline started for execution {ExecutionId}", executionId);
 
-        // Step 0: Select balanced category and subcategory (RF-06)
         var (selectedCategory, selectedSubcategory) = await _categorySelectionPort
             .SelectBalancedCategoryAsync(cancellationToken);
 
-        var context = new PipelineExecutionContext
-        {
-            ExecutionId = executionId,
-            CategoryId = selectedCategory.Id,
-            SubcategoryId = selectedSubcategory.Id,
-            CategoryName = selectedCategory.Name,
-            SubcategoryName = selectedSubcategory.Name
-        };
+        var context = PipelineContext.Create(
+            executionId,
+            selectedCategory,
+            selectedSubcategory);
 
         _logger.LogInformation(
             "Pipeline selected category {Category}/{Subcategory}",
@@ -102,12 +87,12 @@ public sealed class PipelineOrchestrator
                             "Step {Step} failed: {FailureReason} (FailureStep={FailureStep})",
                             step.StepName,
                             result.FailureReason,
-                            result.FailureStep);
+                            result.FailureStepName);
                     }
 
                     await MarkPostAsFailedAsync(
-                        context.PostId,
-                        result.FailureStep ?? step.StepName,
+                        context.Text?.PostId ?? 0,
+                        result.FailureStep ?? FailureStepMap.FromStepName(step.StepName),
                         result.FailureReason ?? "Unknown failure",
                         result.ErrorCode,
                         cancellationToken);
@@ -127,10 +112,10 @@ public sealed class PipelineOrchestrator
                         ex.GetType().Name);
                 }
 
-                var failureStep = MapExceptionToFailureStep(step.StepName);
+                var failureStep = FailureStepMap.FromStepName(step.StepName);
 
                 await MarkPostAsFailedAsync(
-                    context.PostId,
+                    context.Text?.PostId ?? 0,
                     failureStep,
                     $"Unexpected error in {step.StepName}: {ex.Message}",
                     ex.GetType().Name,
@@ -143,12 +128,9 @@ public sealed class PipelineOrchestrator
         _logger.LogInformation("Pipeline completed successfully for execution {ExecutionId}", executionId);
     }
 
-    /// <summary>
-    /// Marks a Post as Failed with the appropriate FailureStep and reason.
-    /// </summary>
     private async Task MarkPostAsFailedAsync(
         long postId,
-        string failureStep,
+        FailureStep failureStep,
         string failureReason,
         string? errorCode,
         CancellationToken cancellationToken)
@@ -167,7 +149,7 @@ public sealed class PipelineOrchestrator
         }
 
         post.Status = PostStatus.Failed;
-        post.FailureStep = ParseFailureStep(failureStep);
+        post.FailureStep = failureStep;
         post.FailureReason = failureReason;
         post.ErrorCode = errorCode;
         post.FailureDetails = failureReason;
@@ -180,39 +162,5 @@ public sealed class PipelineOrchestrator
             postId,
             failureStep,
             failureReason);
-    }
-
-    /// <summary>
-    /// Maps a step name to a FailureStep enum value.
-    /// </summary>
-    private static FailureStep ParseFailureStep(string stepName)
-    {
-        return stepName.ToLowerInvariant() switch
-        {
-            "textgeneration" => FailureStep.TextGeneration,
-            "sourcevalidation" => FailureStep.SourceValidation,
-            "imagegeneration" => FailureStep.ImageGeneration,
-            "imagestorage" or "minio" => FailureStep.ImageStorage,
-            "database" => FailureStep.Database,
-            "instagramapi" or "metapublishing" => FailureStep.InstagramApi,
-            _ => FailureStep.TextGeneration
-        };
-    }
-
-    /// <summary>
-    /// Maps an exception to a FailureStep based on the step name where it occurred.
-    /// </summary>
-    private static string MapExceptionToFailureStep(string stepName)
-    {
-        return stepName.ToLowerInvariant() switch
-        {
-            "textgeneration" => "TextGeneration",
-            "sourcevalidation" => "SourceValidation",
-            "imagegeneration" => "ImageGeneration",
-            "imagestorage" or "minio" => "ImageStorage",
-            "database" => "Database",
-            "instagramapi" or "metapublishing" => "InstagramApi",
-            _ => stepName
-        };
     }
 }
