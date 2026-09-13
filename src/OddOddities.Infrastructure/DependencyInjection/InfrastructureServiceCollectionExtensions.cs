@@ -63,7 +63,7 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddHttpClient<IInstagramPublishingPort, MetaInstagramPublishingAdapter>(client =>
         {
-            client.BaseAddress = new Uri("https://graph.facebook.com/");
+            client.BaseAddress = new Uri("https://graph.instagram.com");
             client.Timeout = TimeSpan.FromSeconds(30);
             client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
         });

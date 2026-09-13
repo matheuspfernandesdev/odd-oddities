@@ -19,8 +19,8 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
     private readonly MetaConfiguration _config;
     private readonly ILogger<MetaInstagramPublishingAdapter> _logger;
 
-    private const string GraphApiVersion = "v17.0";
-    private const string GraphApiBaseUrl = "https://graph.facebook.com";
+    private const string GraphApiVersion = "v26.0";
+    private const string GraphApiBaseUrl = "https://graph.instagram.com";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -125,7 +125,7 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
             mediaId);
 
         var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{mediaId}" +
-                  $"?fields=status_code,status_code_type,permalink" +
+                  $"?fields=permalink" +
                   $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -136,15 +136,15 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
         var result = await response.Content.ReadFromJsonAsync<MediaStatusResponse>(
             JsonOptions, cancellationToken);
 
-        var status = result?.Status ?? "UNKNOWN";
-        var statusCode = result?.StatusCode ?? "UNKNOWN";
         var permalink = result?.Permalink;
+        var status = !string.IsNullOrEmpty(permalink) ? "PUBLISHED" : "PENDING";
+        var statusCode = status;
 
         _logger.LogDebug(
-            "Media status: mediaId={MediaId}, status={Status}, statusCode={StatusCode}",
+            "Media status: mediaId={MediaId}, status={Status}, permalink={Permalink}",
             mediaId,
             status,
-            statusCode);
+            permalink);
 
         return (status, statusCode, permalink);
     }
@@ -194,12 +194,6 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
 
     private sealed class MediaStatusResponse
     {
-        [JsonPropertyName("status_code")]
-        public string? StatusCode { get; set; }
-
-        [JsonPropertyName("status_code_type")]
-        public string? Status { get; set; }
-
         [JsonPropertyName("permalink")]
         public string? Permalink { get; set; }
 

@@ -854,7 +854,7 @@ Content-Type: application/json
 ### Criar container
 
 ```text
-POST https://graph.facebook.com/v17.0/{ig-user-id}/media
+POST https://graph.instagram.com/v26.0/{ig-user-id}/media
   ?image_url=<PRESIGNED_URL>
   &caption=<CAPTION>
   &access_token=<META_ACCESS_TOKEN>
@@ -863,7 +863,7 @@ POST https://graph.facebook.com/v17.0/{ig-user-id}/media
 ### Publicar
 
 ```text
-POST https://graph.facebook.com/v17.0/{ig-user-id}/media_publish
+POST https://graph.instagram.com/v26.0/{ig-user-id}/media_publish
   ?creation_id=<CREATION_ID>
   &access_token=<META_ACCESS_TOKEN>
 ```

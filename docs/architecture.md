@@ -458,8 +458,8 @@ A primeira versao **nao expoe API propria**. O Worker e consumidor de APIs exter
 
 ## Meta Graph API
 
-- **Upload:** `POST /v17.0/{ig-user-id}/media` com `image_url` e `caption`.
-- **Publicacao:** `POST /v17.0/{ig-user-id}/media_publish` com `creation_id`.
+- **Upload:** `POST /v26.0/{ig-user-id}/media` com `image_url` e `caption`.
+- **Publicacao:** `POST /v26.0/{ig-user-id}/media_publish` com `creation_id`.
 - **Renovacao:** `GET https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=<token>`.
 
 ## MinIO (S3 compativel)
