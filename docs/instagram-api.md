@@ -18,8 +18,8 @@ Este tutorial cobre todo o caminho necessario para configurar o **Instagram Grap
 1. Abra o Instagram no celular.
 2. Va em **Configuracoes > Conta > Trocar para conta profissional**.
 3. Escolha **Empresa** ou **Criador de conteudo**.
-4. Conecte a uma Pagina do Facebook.
-5. Se nao existir Pagina, crie uma neste passo.
+
+**Importante:** O Instagram **nao obriga** a vincular uma Pagina do Facebook neste momento. O vinculo sera feito manualmente no proximo passo.
 
 ---
 
@@ -33,14 +33,22 @@ Este tutorial cobre todo o caminho necessario para configurar o **Instagram Grap
    - Descricao curta.
 4. Clique em **Criar pagina**.
 
+**Nota:** Voce precisa de uma conta no Facebook para criar a pagina. Use a mesma conta que sera usada no Meta for Developers.
+
 ---
 
 ## 4. Vincular Instagram a Pagina do Facebook
 
+**Atencao:** O caminho mudou! Nao e mais em "Configuracoes".
+
 1. Abra o Instagram no celular.
-2. Va em **Configuracoes > Conta > Conta profissional > Pagina conectada**.
-3. Selecione a pagina criada.
-4. Confirme o vinculo.
+2. Toque no seu **perfil** (icone embaixo a direita).
+3. Toque em **"Editar perfil"**.
+4. Role para baixo ate **"Informacoes comerciais publicas"** (se for conta comercial) ou **"Informacoes do perfil"** (se for criador).
+5. Toque em **"Pagina"**.
+6. Toque em **"Conectar ou criar"**.
+7. Toque em **"Entrar no Facebook"** e faca login com a conta que criou a pagina.
+8. Escolha a pagina e toque em **"Conectar"**.
 
 ---
 
@@ -48,7 +56,7 @@ Este tutorial cobre todo o caminho necessario para configurar o **Instagram Grap
 
 1. Acesse https://developers.facebook.com/apps/creation/.
 2. Clique em **Criar um app**.
-3. Em **Caso de uso**, selecione **Outro**.
+3. Em **Caso de uso**, selecione **Gerenciar mensagens e conteudo no Instagram**.
 4. Em **Tipo de app**, selecione **Business**.
 5. Preencha:
    - Nome do app (ex: "Odd Oddities Automation").
@@ -57,118 +65,79 @@ Este tutorial cobre todo o caminho necessario para configurar o **Instagram Grap
 6. Clique em **Criar app**.
 7. Confirme a senha do Facebook.
 
----
-
-## 6. Adicionar o produto Instagram
-
-1. No painel do app, procure por **Instagram Graph API**.
-2. Clique em **Configurar**.
-3. Aceite os termos.
+**Nota:** Ao escolher o caso de uso "Gerenciar mensagens e conteudo no Instagram", o produto Instagram Graph API e adicionado automaticamente ao app.
 
 ---
 
-## 7. Adicionar a conta do Instagram como Tester
+## 6. Adicionar a conta do Instagram como Tester
 
-1. Va em **Funcoes > Funcoes do app**.
-2. Em **Testers do Instagram**, clique em **Adicionar testers do Instagram**.
-3. Pesquise pelo seu usuario do Instagram.
-4. Envie o convite.
-
----
-
-## 8. Aceitar o convite no Instagram
-
-1. Abra o Instagram no celular.
-2. Va em **Configuracoes > Empresa > Configurar contas > Convites**.
-3. Aceite o convite do app criado.
-4. Autorize as permissoes solicitadas.
+1. No menu lateral esquerdo, clique em **"Funcoes do app"** (icone de pessoa).
+2. Clique em **"Funcoes"**.
+3. No canto superior direito, clique em **"Adicionar pessoas"**.
+4. Na janela que abrir, selecione a aba **"Instagram testers"** (nao "Testadores" comum).
+5. Digite seu **nome de usuario do Instagram** (sem o @).
+6. Selecione a conta correta e envie o convite.
+7. O status ficara como "Pending" ate o convite ser aceito.
 
 ---
 
-## 9. Obter App ID e App Secret
+## 7. Aceitar o convite no Instagram
+
+**Atencao:** O convite **nao aparece no aplicativo do celular**! So funciona no navegador do computador.
+
+1. Abra o navegador do **computador**.
+2. Acesse https://www.instagram.com.
+3. Faca login na conta que voce adicionou como tester.
+4. Clique no icone de engrenagem (ou va em **Configuracoes**).
+5. Va em **Permissoes do site > Apps e websites**.
+6. Clique em **"Convites do Testador"**.
+7. Aceite o convite do app "Odd Oddities Automation".
+
+Depois que aceitar, volte ao painel do Meta e o status deve mudar de "Pending" para "Active".
+
+---
+
+## 8. Obter App ID e App Secret
 
 1. No painel do app, va em **Configuracoes > Basico**.
 2. Copie:
-   - **App ID** (sera `META_APP_ID`).
-   - **App Secret** (clique em "Mostrar" e copie; sera `META_APP_SECRET`).
+   - **ID do aplicativo** (sera `META_APP_ID`).
+   - **Chave Secreta do aplicativo** (clique em "Mostrar" e copie; sera `META_APP_SECRET`).
 3. Armazene ambos em local seguro (GitHub Actions Secrets).
 
 ---
 
-## 10. Obter Instagram User ID
+## 9. Gerar Token de Acesso e Obter Instagram User ID
 
-O Instagram User ID e necessario para todas as chamadas a Instagram Graph API.
+O fluxo antigo usava o Graph API Explorer, mas agora e mais direto pelo painel do app.
 
-### Via Graph API Explorer
+### Via "Casos de uso" (fluxo novo e recomendado)
 
-1. Acesse https://developers.facebook.com/tools/explorer/.
-2. Selecione o app criado.
-3. Adicione a permissao `instagram_business_basic`.
-4. Gere um token curto de teste (clique em **Generate Access Token**).
-5. Faca a chamada:
-
-```text
-GET https://graph.facebook.com/v17.0/me/accounts?access_token=<TOKEN>
-```
-
-6. Localize a Pagina do Odd Oddities e copie o `id` (Page ID).
-7. Agora obtenha o Instagram User ID:
-
-```text
-GET https://graph.facebook.com/v17.0/<PAGE_ID>?fields=instagram_business_account&access_token=<TOKEN>
-```
-
-8. O campo `instagram_business_account.id` e o seu **Instagram User ID** (`INSTAGRAM_USER_ID`).
-
----
-
-## 11. Gerar token de curta duracao (para troca)
-
-A primeira vez, voce precisa de um token curto gerado por OAuth. Para isso, monte a URL abaixo substituindo `<APP_ID>`, `<REDIRECT_URI>` e nosso escopo:
-
-```text
-https://api.instagram.com/oauth/authorize
-  ?client_id=<APP_ID>
-  &redirect_uri=<REDIRECT_URI>
-  &scope=user_profile,user_media
-  &response_type=code
-```
-
-`<REDIRECT_URI>` deve estar cadastrado em **Instagram > API Setup with Instagram Business Login > Valid OAuth Redirect URIs** no painel do app.
-
-1. Abra a URL no navegador.
-2. Faca login com a conta do Instagram Business.
-3. Aceite as permissoes.
-4. O Instagram redireciona para `<REDIRECT_URI>?code=<CODIGO>`.
-5. Copie o valor de `code`.
-
----
-
-## 12. Trocar code por token curto
-
-```text
-POST https://api.instagram.com/oauth/access_token
-  ?client_id=<APP_ID>
-  &client_secret=<APP_SECRET>
-  &grant_type=authorization_code
-  &redirect_uri=<REDIRECT_URI>
-  &code=<CODE>
-```
-
-Resposta:
+1. No menu lateral, clique em **"Casos de uso"**.
+2. Clique em **"Personalizar"** ao lado de "Gerenciar mensagens e conteudo no Instagram".
+3. Procure a secao **"Configuracao da API com login do Instagram"**.
+4. Expanda o passo **"2. Gerar tokens de acesso"**.
+5. Clique em **"Adicionar conta"** ou **"Generate access token"**.
+6. Faca login com a conta do Instagram Business.
+7. O token sera gerado e a resposta JSON mostrara:
 
 ```json
 {
-  "access_token": "<TOKEN_CURTO>",
-  "user_id": <INSTAGRAM_USER_ID>
+  "access_token": "IGQV...",
+  "user_id": 17841401234567890
 }
 ```
 
-`access_token` dura cerca de 1 hora.
+8. **Copie o `access_token`** (sera usado como `META_ACCESS_TOKEN` temporario).
+9. **Copie o `user_id`** (sera usado como `INSTAGRAM_USER_ID`).
+
+**Nota:** O token gerado pelo painel e de **curta duracao** (cerca de 1 hora). Para uso em producao, voce precisa troca-lo por um token de longa duracao (60 dias) no proximo passo.
 
 ---
 
-## 13. Trocar token curto por token longo
+## 10. Trocar token curto por token longo
+
+O token gerado no passo anterior dura apenas 1 hora. Para obter um token de 60 dias, faca essa chamada:
 
 ```text
 GET https://graph.instagram.com/access_token
@@ -187,22 +156,22 @@ Resposta:
 }
 ```
 
-`expires_in` e aproximadamente 60 dias. Esse token e o `META_ACCESS_TOKEN` inicial.
+`expires_in` e aproximadamente 60 dias. Esse token e o `META_ACCESS_TOKEN` inicial para producao.
 
 ---
 
-## 14. Definir escopo das permissoes
+## 11. Definir escopo das permissoes
 
 Para esta POC, as permissoes necessarias sao:
 
 - `instagram_business_basic`
 - `instagram_business_content_publish`
 
-A Meta pode exigir **App Review** para permissoes avancadas. Para uso pessoal publicando apenas na propria conta Business, normalmente o acesso funciona com o token gerado via fluxo OAuth acima.
+A Meta pode exigir **App Review** para permissoes avancadas. Para uso pessoal publicando apenas na propria conta Business, normalmente o acesso funciona com o token gerado via fluxo acima.
 
 ---
 
-## 15. Testar o token
+## 12. Testar o token
 
 ```text
 GET https://graph.instagram.com/me?fields=id,username&access_token=<TOKEN_LONGO>
@@ -219,7 +188,7 @@ Resposta esperada:
 
 ---
 
-## 16. Testar publicacao manual
+## 13. Testar publicacao manual
 
 ```text
 POST https://graph.facebook.com/v17.0/<INSTAGRAM_USER_ID>/media
@@ -254,7 +223,7 @@ GET https://graph.facebook.com/v17.0/<CREATION_ID>?fields=status_code&access_tok
 
 ---
 
-## 17. Renovacao automatica (implementada no Worker)
+## 14. Renovacao automatica (implementada no Worker)
 
 O Worker verifica a data de expiracao e chama:
 
@@ -285,16 +254,16 @@ O Worker criptografa o novo token com AES-256-GCM e substitui o anterior.
 
 ---
 
-## 18. Reautorizacao manual (quando a renovacao automatica falha)
+## 15. Reautorizacao manual (quando a renovacao automatica falha)
 
-1. Repita os passos 11 a 13 para gerar um novo token.
+1. Repita os passos 9 e 10 para gerar um novo token.
 2. Defina a variavel de ambiente `META_ACCESS_TOKEN` com o novo valor.
 3. Execute o deploy novamente para injetar a variavel.
 4. O Worker detectara o novo token na proxima execucao.
 
 ---
 
-## 19. Troubleshooting
+## 16. Troubleshooting
 
 | Sintoma | Causa provavel | Solucao |
 |---|---|---|
@@ -304,13 +273,17 @@ O Worker criptografa o novo token com AES-256-GCM e substitui o anterior.
 | Imagem nao aparece | URL publica nao acessivel | Verificar HTTPS e URL pre-assinada |
 | `media_publish` retorna `IN_PROGRESS` | Processamento assincrono | Polling ate virar `PUBLISHED` ou `ERROR` |
 | Token refresh retorna 400 | Token ainda muito novo (<24h) | Aguardar 24h ou usar novo token |
+| Convite de tester nao aparece | Tentando aceitar no app do celular | Usar navegador do PC em instagram.com |
+| Dropdown de permissoes vazio no Graph API Explorer | Token nao gerado ainda | Gerar token primeiro antes de adicionar permissoes |
+| App "nao disponivel" ao gerar token | App sem permissoes configuradas | Usar fluxo "Casos de uso > Personalizar" em vez do Graph API Explorer |
 
 ---
 
-## 20. Referencias oficiais
+## 17. Referencias oficiais
 
 - https://developers.facebook.com/docs/instagram-platform
 - https://developers.facebook.com/docs/instagram-platform/reference/access_token
 - https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token
 - https://developers.facebook.com/docs/instagram-api/reference/media
 - https://developers.facebook.com/docs/instagram-api/reference/media-publish
+- https://developers.facebook.com/documentation/instagram-platform/create-an-instagram-app
