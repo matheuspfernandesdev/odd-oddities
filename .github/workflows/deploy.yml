@@ -1,0 +1,63 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy to VPS
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          VPS_DEPLOY_PATH: ${{ vars.VPS_DEPLOY_PATH }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $VPS_USER@$VPS_HOST << EOF
+            set -e
+            if [ -d "$VPS_DEPLOY_PATH/.git" ]; then
+              cd $VPS_DEPLOY_PATH
+              echo "Pulling latest code..."
+              git pull origin main
+            else
+              echo "Cloning repository..."
+              git clone git@github.com:matheuspfernandesdev/odd-oddities.git $VPS_DEPLOY_PATH
+              cd $VPS_DEPLOY_PATH
+            fi
+
+            echo "Exporting environment variables..."
+            export POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}"
+            export OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}"
+            export TEXT_MODEL_ID="${{ vars.TEXT_MODEL_ID }}"
+            export IMAGE_MODEL_ID="${{ vars.IMAGE_MODEL_ID }}"
+            export META_APP_ID="${{ secrets.META_APP_ID }}"
+            export META_APP_SECRET="${{ secrets.META_APP_SECRET }}"
+            export META_ACCESS_TOKEN="${{ secrets.META_ACCESS_TOKEN }}"
+            export INSTAGRAM_USER_ID="${{ secrets.INSTAGRAM_USER_ID }}"
+            export MINIO_ACCESS_KEY="${{ secrets.MINIO_ACCESS_KEY }}"
+            export MINIO_SECRET_KEY="${{ secrets.MINIO_SECRET_KEY }}"
+            export MINIO_BUCKET_NAME="${{ secrets.MINIO_BUCKET_NAME }}"
+            export STORAGE_DOMAIN="${{ secrets.STORAGE_DOMAIN }}"
+            export TOKEN_ENCRYPTION_KEY="${{ secrets.TOKEN_ENCRYPTION_KEY }}"
+            export SCHEDULE_HOUR_UTC="${{ vars.SCHEDULE_HOUR_UTC }}"
+            export SCHEDULE_TIMEZONE="${{ vars.SCHEDULE_TIMEZONE }}"
+            export SCHEDULE_DAYS="${{ vars.SCHEDULE_DAYS }}"
+
+            echo "Building and starting container..."
+            docker compose -f docker-compose.yml up -d --build
+
+            echo "Deployment complete!"
+            docker compose ps
+            docker logs --tail 5 odd-oddities-worker
+          EOF
