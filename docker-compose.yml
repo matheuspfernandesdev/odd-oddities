@@ -18,7 +18,7 @@ services:
       - AppConfiguration__Meta__AppSecret=${META_APP_SECRET}
       - AppConfiguration__Meta__AccessToken=${META_ACCESS_TOKEN}
       - AppConfiguration__Meta__InstagramUserId=${INSTAGRAM_USER_ID}
-      - AppConfiguration__MinIO__Endpoint=minio:9000
+      - AppConfiguration__MinIO__Endpoint=https://${STORAGE_DOMAIN}
       - AppConfiguration__MinIO__AccessKey=${MINIO_ACCESS_KEY}
       - AppConfiguration__MinIO__SecretKey=${MINIO_SECRET_KEY}
       - AppConfiguration__MinIO__BucketName=${MINIO_BUCKET_NAME}
@@ -36,8 +36,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 30s
@@ -68,59 +66,11 @@ services:
       timeout: 5s
       retries: 5
 
-  minio:
-    image: minio/minio:latest
-    container_name: odd-oddities-minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
-    volumes:
-      - minio_data:/data
-    networks:
-      - internal
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  nginx:
-    image: nginx:1.24-alpine
-    container_name: odd-oddities-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./certs:/etc/nginx/certs:ro
-    networks:
-      - edge
-    depends_on:
-      - minio
-
-  certbot:
-    image: certbot/certbot:latest
-    container_name: odd-oddities-certbot
-    volumes:
-      - ./certs:/etc/letsencrypt
-      - ./www:/var/www/html
-    networks:
-      - edge
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
-
 volumes:
   postgres_data:
-    driver: local
-  minio_data:
     driver: local
 
 networks:
   internal:
     driver: bridge
     name: odd-oddities-internal
-  edge:
-    driver: bridge
-    name: odd-oddities-edge

@@ -1,5 +1,9 @@
 # Tutorial: Nginx + Let's Encrypt + Certbot (Ubuntu LTS)
 
+> **Infra compartilhada:** MinIO, Nginx e Certbot nao vivem mais neste repositorio.
+> Use o repo `vps-infra` e o runbook `docs/setup-guide.md` la.
+> Este arquivo ficou como referencia historica do desenho original (ADR-005).
+
 Este tutorial cobre do zero a configuracao de **Nginx como reverse proxy HTTPS** para o MinIO, com certificados **Let's Encrypt** emitidos e renovados via container **Certbot**. Foi desenhado para Ubuntu Server 22.04 LTS ou 24.04 LTS em uma VPS unica com Docker e Docker Compose.
 
 > Pre-requisitos:

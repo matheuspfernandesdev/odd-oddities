@@ -234,21 +234,33 @@ public sealed class MinioObjectStorageAdapter : IObjectStoragePort, IDisposable
     }
 
     /// <summary>
-    /// Creates an S3 client configured for MinIO compatibility (internal endpoint).
+    /// Creates an S3 client configured for MinIO compatibility.
+    /// Supports both internal HTTP endpoints (e.g., minio:9000) and public HTTPS endpoints (e.g., s3.domain.com).
     /// </summary>
     private static IAmazonS3 CreateS3Client(MinioConfiguration config)
     {
+        var endpoint = config.Endpoint;
+        var useHttp = true;
+
+        if (endpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            useHttp = false;
+        }
+        else if (endpoint.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            useHttp = true;
+        }
+        else
+        {
+            endpoint = $"http://{endpoint}";
+        }
+
         var s3Config = new AmazonS3Config
         {
-            // MinIO internal endpoint configuration
-            ServiceURL = $"http://{config.Endpoint}",
-            // Force path-style URLs (required for MinIO)
+            ServiceURL = endpoint,
             ForcePathStyle = true,
-            // Use HTTP for internal Docker communication
-            UseHttp = true,
-            // Increase timeout for large uploads
+            UseHttp = useHttp,
             Timeout = TimeSpan.FromMinutes(10),
-            // Retry configuration
             MaxErrorRetry = 3
         };
 
