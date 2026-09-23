@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OddOddities.Domain.Exceptions;
 using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
 
@@ -69,7 +70,8 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
                               "theme (a normalized theme label, max 120 characters), " +
                               "sourceUrl (a valid HTTP/HTTPS URL to a credible source), " +
                               "category (the category name), " +
-                              "subcategory (the subcategory name)."
+                              "subcategory (the subcategory name). " +
+                              "Return only a JSON object — not an array and not wrapped in markdown code fences."
                 },
                 new
                 {
@@ -105,13 +107,19 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
 
         var contentJson = responseBody.Choices[0].Message.Content;
 
-        _logger.LogDebug("Raw OpenRouter response: {Content}", contentJson);
-
-        var curiosity = JsonSerializer.Deserialize<CuriosityResponse>(contentJson, JsonOptions);
-
-        if (curiosity is null)
+        CuriosityPayload curiosity;
+        try
         {
-            throw new InvalidOperationException("Failed to deserialize OpenRouter curiosity response.");
+            curiosity = CuriosityJsonParser.Parse(contentJson);
+        }
+        catch (CuriosityParsingException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to parse curiosity JSON from model {ModelId}. Raw content: {RawContent}",
+                _config.TextModelId,
+                contentJson);
+            throw;
         }
 
         _logger.LogInformation(
@@ -161,26 +169,5 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
 
         [JsonPropertyName("total_tokens")]
         public int TotalTokens { get; set; }
-    }
-
-    private sealed class CuriosityResponse
-    {
-        [JsonPropertyName("textContent")]
-        public string? TextContent { get; set; }
-
-        [JsonPropertyName("summary")]
-        public string? Summary { get; set; }
-
-        [JsonPropertyName("theme")]
-        public string? Theme { get; set; }
-
-        [JsonPropertyName("sourceUrl")]
-        public string? SourceUrl { get; set; }
-
-        [JsonPropertyName("category")]
-        public string? Category { get; set; }
-
-        [JsonPropertyName("subcategory")]
-        public string? Subcategory { get; set; }
     }
 }

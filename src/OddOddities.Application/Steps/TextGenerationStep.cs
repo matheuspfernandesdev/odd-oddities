@@ -5,6 +5,7 @@ using OddOddities.Application.Ports;
 using OddOddities.Domain.Constants;
 using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
+using OddOddities.Domain.Exceptions;
 using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
 
@@ -58,16 +59,31 @@ public sealed class TextGenerationStep : IPipelineStep
                 attempt,
                 PipelineConstants.MaxGenerationAttempts);
 
-            var curiosity = await _textGenerationPort.GenerateCuriosityAsync(
-                context.Selection.CategoryName,
-                context.Selection.SubcategoryName,
+            var curiosity = await TryGenerateCuriosityAsync(
+                context,
+                attempt,
                 cancellationToken);
 
-            if (curiosity.TextContent.Length > _config.Value.MaxCaptionContentLength)
+            if (curiosity is null)
+            {
+                if (attempt == PipelineConstants.MaxGenerationAttempts)
+                {
+                    return StepResult.Failure(
+                        FailureStep.TextGeneration,
+                        "Failed to parse model response after max attempts",
+                        "TEXT_PARSE_ERROR");
+                }
+
+                continue;
+            }
+
+            var (textContent, summary, theme, sourceUrl, _, _) = curiosity.Value;
+
+            if (textContent.Length > _config.Value.MaxCaptionContentLength)
             {
                 _logger.LogWarning(
                     "TextContent exceeds max length: {Length} > {MaxLength}",
-                    curiosity.TextContent.Length,
+                    textContent.Length,
                     _config.Value.MaxCaptionContentLength);
 
                 if (attempt == PipelineConstants.MaxGenerationAttempts)
@@ -81,7 +97,7 @@ public sealed class TextGenerationStep : IPipelineStep
                 continue;
             }
 
-            var contentHash = _similarityCheck.ComputeContentHash(curiosity.TextContent);
+            var contentHash = _similarityCheck.ComputeContentHash(textContent);
 
             if (await _similarityCheck.IsContentHashDuplicateAsync(contentHash, cancellationToken))
             {
@@ -101,7 +117,7 @@ public sealed class TextGenerationStep : IPipelineStep
                 continue;
             }
 
-            if (await _similarityCheck.IsSummarySimilarAsync(curiosity.Summary, PipelineConstants.DefaultSimilarityThreshold, cancellationToken))
+            if (await _similarityCheck.IsSummarySimilarAsync(summary, PipelineConstants.DefaultSimilarityThreshold, cancellationToken))
             {
                 _logger.LogWarning(
                     "Summary similarity detected on attempt {Attempt}",
@@ -122,24 +138,24 @@ public sealed class TextGenerationStep : IPipelineStep
             {
                 CategoryId = context.Selection.CategoryId,
                 SubcategoryId = context.Selection.SubcategoryId,
-                TextContent = curiosity.TextContent,
-                Summary = curiosity.Summary,
-                Theme = curiosity.Theme,
+                TextContent = textContent,
+                Summary = summary,
+                Theme = theme,
                 ContentHash = contentHash,
-                SourceUrl = curiosity.SourceUrl,
+                SourceUrl = sourceUrl,
                 Status = PostStatus.Generated,
-                Caption = $"{curiosity.TextContent}\n\nSource: {curiosity.SourceUrl}"
+                Caption = $"{textContent}\n\nSource: {sourceUrl}"
             };
 
             var createdPost = await _postRepository.CreateAsync(post, cancellationToken);
 
             context.Text = new TextContext(
                 PostId: createdPost.Id,
-                TextContent: curiosity.TextContent,
-                Summary: curiosity.Summary,
-                Theme: curiosity.Theme,
+                TextContent: textContent,
+                Summary: summary,
+                Theme: theme,
                 ContentHash: contentHash,
-                SourceUrl: curiosity.SourceUrl,
+                SourceUrl: sourceUrl,
                 Caption: post.Caption);
 
             _logger.LogInformation(
@@ -154,5 +170,35 @@ public sealed class TextGenerationStep : IPipelineStep
             FailureStep.TextGeneration,
             "Unexpected failure in text generation",
             "UNEXPECTED_ERROR");
+    }
+
+    private async Task<(
+        string TextContent,
+        string Summary,
+        string Theme,
+        string SourceUrl,
+        string Category,
+        string Subcategory)?> TryGenerateCuriosityAsync(
+        PipelineContext context,
+        int attempt,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _textGenerationPort.GenerateCuriosityAsync(
+                context.Selection.CategoryName,
+                context.Selection.SubcategoryName,
+                cancellationToken);
+        }
+        catch (CuriosityParsingException ex)
+        {
+            _logger.LogWarning(
+                "Curiosity parse failed on attempt {Attempt}/{MaxAttempts}: {Reason}",
+                attempt,
+                PipelineConstants.MaxGenerationAttempts,
+                ex.Message);
+
+            return null;
+        }
     }
 }
