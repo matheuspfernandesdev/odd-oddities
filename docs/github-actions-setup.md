@@ -10,6 +10,7 @@ Guia completo, passo a passo, para publicar o Odd Oddities na VPS. Execute as se
 GitHub Actions (workflow_dispatch - gatilho MANUAL)
     -> SSH na VPS (chave existente, mesma do aws-lambda-api-schedule)
         -> ssh-keyscan github.com (known_hosts)
+        -> mkdir -p do diretorio de deploy (cria se nao existir)
         -> git clone / git pull
         -> grava /var/www/odd-oddities/.env (chmod 600)
         -> docker compose up -d --build
@@ -52,11 +53,15 @@ cd /opt/vps-infra && docker compose ps
 
 Esperado: o container `vps-minio` com status **`healthy`**. Se nao estiver, suba o `vps-infra` antes de continuar (o Odd Oddities depende dele).
 
-### 1.2 Criar o diretorio de deploy
+### 1.2 Diretorio de deploy
+
+Nao e preciso criar nada na mao: o workflow roda `mkdir -p $VPS_DEPLOY_PATH` antes do
+clone e **cria o diretorio automaticamente** se nao existir.
+
+Se quiser conferir (opcional):
 
 ```bash
-sudo mkdir -p /var/www/odd-oddities
-sudo chown $USER:$USER /var/www/odd-oddities
+ls -ld /var/www/odd-oddities
 ```
 
 ### 1.3 Conferir a chave SSH existente (NAO gere chave nova)
@@ -204,7 +209,7 @@ O deploy e **manual** (o `push` para `main` nao dispara nada - esta comentado de
 
 1. Conecta via SSH na VPS usando `SSH_PRIVATE_KEY`
 2. Garante `github.com` no `known_hosts` (`ssh-keyscan`)
-3. `git clone` (primeira vez) ou `git pull` em `/var/www/odd-oddities`
+3. `mkdir -p` do diretorio de deploy (cria se nao existir) e `git clone` (primeira vez) ou `git pull` em `/var/www/odd-oddities`
 4. Grava o arquivo `/var/www/odd-oddities/.env` com todas as Secrets + Variables (`chmod 600`)
 5. `docker compose up -d --build` (o Docker Compose le o `.env` automaticamente)
 6. Mostra `docker compose ps` e as ultimas linhas de log do Worker
@@ -305,8 +310,9 @@ docker compose logs
 
 ### VPS (uma vez)
 - [ ] `vps-infra` no ar (`/opt/vps-infra` - MinIO healthy)
-- [ ] Diretorio `/var/www/odd-oddities` criado
 - [ ] `ssh -T git@github.com` funciona (ou deploy key read-only adicionada)
+
+> O diretorio `/var/www/odd-oddities` **nao precisa ser criado manualmente** - o workflow cria com `mkdir -p` a cada deploy.
 
 ### MinIO (uma vez)
 - [ ] Access key de servico criada no Console com policy `odd-oddities-prod`

@@ -26,6 +26,15 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no $VPS_USER@$VPS_HOST << EOF
             set -e
+
+            mkdir -p ~/.ssh
+            if ! grep -q github.com ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Adding github.com to known_hosts..."
+              ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+            fi
+
+            mkdir -p "$VPS_DEPLOY_PATH"
+
             if [ -d "$VPS_DEPLOY_PATH/.git" ]; then
               cd $VPS_DEPLOY_PATH
               echo "Pulling latest code..."
@@ -36,25 +45,28 @@ jobs:
               cd $VPS_DEPLOY_PATH
             fi
 
-            echo "Exporting environment variables..."
-            export POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}"
-            export OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}"
-            export TEXT_MODEL_ID="${{ vars.TEXT_MODEL_ID }}"
-            export IMAGE_MODEL_ID="${{ vars.IMAGE_MODEL_ID }}"
-            export META_APP_ID="${{ secrets.META_APP_ID }}"
-            export META_APP_SECRET="${{ secrets.META_APP_SECRET }}"
-            export META_ACCESS_TOKEN="${{ secrets.META_ACCESS_TOKEN }}"
-            export INSTAGRAM_USER_ID="${{ secrets.INSTAGRAM_USER_ID }}"
-            export MINIO_ACCESS_KEY="${{ secrets.MINIO_ACCESS_KEY }}"
-            export MINIO_SECRET_KEY="${{ secrets.MINIO_SECRET_KEY }}"
-            export MINIO_BUCKET_NAME="${{ secrets.MINIO_BUCKET_NAME }}"
-            export STORAGE_DOMAIN="${{ secrets.STORAGE_DOMAIN }}"
-            export TOKEN_ENCRYPTION_KEY="${{ secrets.TOKEN_ENCRYPTION_KEY }}"
-            export SCHEDULE_HOUR_UTC="${{ vars.SCHEDULE_HOUR_UTC }}"
-            export SCHEDULE_TIMEZONE="${{ vars.SCHEDULE_TIMEZONE }}"
-            export SCHEDULE_DAYS="${{ vars.SCHEDULE_DAYS }}"
+            echo "Writing environment file..."
+            cat > .env << 'ENVEOF'
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+          TEXT_MODEL_ID=${{ vars.TEXT_MODEL_ID }}
+          IMAGE_MODEL_ID=${{ vars.IMAGE_MODEL_ID }}
+          META_APP_ID=${{ secrets.META_APP_ID }}
+          META_APP_SECRET=${{ secrets.META_APP_SECRET }}
+          META_ACCESS_TOKEN=${{ secrets.META_ACCESS_TOKEN }}
+          INSTAGRAM_USER_ID=${{ secrets.INSTAGRAM_USER_ID }}
+          MINIO_ACCESS_KEY=${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY=${{ secrets.MINIO_SECRET_KEY }}
+          MINIO_BUCKET_NAME=${{ secrets.MINIO_BUCKET_NAME }}
+          STORAGE_DOMAIN=${{ secrets.STORAGE_DOMAIN }}
+          TOKEN_ENCRYPTION_KEY=${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          SCHEDULE_HOUR_UTC=${{ vars.SCHEDULE_HOUR_UTC }}
+          SCHEDULE_TIMEZONE=${{ vars.SCHEDULE_TIMEZONE }}
+          SCHEDULE_DAYS=${{ vars.SCHEDULE_DAYS }}
+          ENVEOF
+            chmod 600 .env
 
-            echo "Building and starting container..."
+            echo "Building and starting containers..."
             docker compose -f docker-compose.yml up -d --build
 
             echo "Deployment complete!"
