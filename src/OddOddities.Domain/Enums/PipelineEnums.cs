@@ -22,7 +22,10 @@ public enum FailureStep
     ImageGeneration = 2,
     ImageStorage = 3,
     Database = 4,
-    InstagramApi = 5
+    InstagramApi = 5,
+    VideoGeneration = 6,
+    VideoStorage = 7,
+    CommentModeration = 8
 }
 
 /// <summary>

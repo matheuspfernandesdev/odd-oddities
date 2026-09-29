@@ -85,6 +85,9 @@ public class PostConfiguration : IEntityTypeConfiguration<Post>
             .HasMaxLength(255)
             .IsRequired();
 
+        builder.Property(p => p.VideoObjectKey)
+            .HasMaxLength(255);
+
         builder.Property(p => p.ImageWidth)
             .HasDefaultValue(1080);
 

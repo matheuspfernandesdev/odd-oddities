@@ -80,6 +80,47 @@ public static class PipelineConstants
     /// Estimated completion tokens used to estimate text generation cost before the call.
     /// </summary>
     public const int EstimatedCompletionTokens = 600;
+
+    /// <summary>
+    /// Default generated video duration in seconds when the text prompt does not
+    /// specify one (RF-14).
+    /// </summary>
+    public const int DefaultVideoDurationSeconds = 5;
+
+    /// <summary>
+    /// Maximum video duration in seconds accepted by the video generation request (RF-14).
+    /// </summary>
+    public const int MaxVideoDurationSeconds = 8;
+
+    /// <summary>
+    /// Minimum video duration in seconds accepted by the video generation request (RF-14).
+    /// </summary>
+    public const int MinVideoDurationSeconds = 3;
+
+    /// <summary>
+    /// Maximum number of attempts to wait for an asynchronous video generation job to
+    /// finish. Together with <see cref="VideoJobPollingIntervalSeconds"/> covers ~15 min.
+    /// </summary>
+    public const int MaxVideoJobPollingAttempts = 30;
+
+    /// <summary>
+    /// Polling interval in seconds between video generation job status checks (30 × 30 s
+    /// ≈ 15 min of job time).
+    /// </summary>
+    public const int VideoJobPollingIntervalSeconds = 30;
+
+    /// <summary>
+    /// Maximum number of attempts to wait for the Meta Reels media container to reach
+    /// FINISHED before publishing. Together with
+    /// <see cref="ReelsContainerPollingIntervalSeconds"/> covers ~5 min of Meta processing.
+    /// </summary>
+    public const int MaxReelsContainerPollingAttempts = 10;
+
+    /// <summary>
+    /// Polling interval in seconds between Reels container status checks (10 × 30 s
+    /// ≈ 5 min of Meta processing time).
+    /// </summary>
+    public const int ReelsContainerPollingIntervalSeconds = 30;
 }
 
 /// <summary>

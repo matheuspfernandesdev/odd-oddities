@@ -19,6 +19,9 @@ public sealed class Post
     public int ImageWidth { get; set; } = 1080;
     public int ImageHeight { get; set; } = 1080;
     public long ImageBytes { get; set; }
+    public string? VideoObjectKey { get; set; }
+    public long? VideoBytes { get; set; }
+    public int? VideoDurationSeconds { get; set; }
     public PostStatus Status { get; set; } = PostStatus.Generated;
     public FailureStep? FailureStep { get; set; }
     public string? FailureReason { get; set; }

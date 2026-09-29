@@ -18,7 +18,13 @@ internal static class FailureStepMap
             ["minio"] = FailureStep.ImageStorage,
             ["database"] = FailureStep.Database,
             ["instagramapi"] = FailureStep.InstagramApi,
-            ["metapublishing"] = FailureStep.InstagramApi
+            ["metapublishing"] = FailureStep.InstagramApi,
+            // "videogenerationstep" is the name required by RF-14 AC5; RF-17 declares the
+            // step's StepName as "VideoGeneration", so both are mapped to avoid falling
+            // back to TextGeneration for video failures.
+            ["videogenerationstep"] = FailureStep.VideoGeneration,
+            ["videogeneration"] = FailureStep.VideoGeneration,
+            ["videostorage"] = FailureStep.VideoStorage
         };
 
     /// <summary>

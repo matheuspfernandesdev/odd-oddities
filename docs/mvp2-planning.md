@@ -440,7 +440,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-14: Colunas e constantes de vídeo no Post
+## [x] RF-14: Colunas e constantes de vídeo no Post
 
 **User Story:** Como dono, quero persistir os metadados do vídeo gerado no Post, para auditoria e para a regra de intervalo do RF-15.
 
