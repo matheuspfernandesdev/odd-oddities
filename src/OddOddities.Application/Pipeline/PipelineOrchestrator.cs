@@ -9,6 +9,8 @@ namespace OddOddities.Application.Pipeline;
 /// Orchestrates the content pipeline (RF-01) with step-level error handling (RF-11).
 /// Executes each IPipelineStep in sequence, tracking executionId, step, and outcome
 /// via structured logging. On failure, marks the Post as Failed with the appropriate FailureStep.
+/// Steps returning <see cref="StepOutcome.Skipped"/> are logged as "Skipped" and the pipeline
+/// continues to the next step without touching the Post (RF-13).
 /// </summary>
 public sealed class PipelineOrchestrator
 {
@@ -69,7 +71,19 @@ public sealed class PipelineOrchestrator
                 var result = await step.ExecuteAsync(context, cancellationToken);
                 stopwatch.Stop();
 
-                if (result.IsSuccess)
+                if (result.Outcome == StepOutcome.Skipped)
+                {
+                    // RF-13: a step that does not apply to this execution is skipped, never fails
+                    // the pipeline and never marks the Post as Failed. The foreach continues.
+                    using (_logCorrelation.PushCorrelation(executionId, step.StepName, "Skipped", stopwatch.ElapsedMilliseconds))
+                    {
+                        _logger.LogInformation(
+                            "Step {Step} skipped after {Duration}ms - not applicable to this execution, continuing",
+                            step.StepName,
+                            stopwatch.ElapsedMilliseconds);
+                    }
+                }
+                else if (result.IsSuccess)
                 {
                     using (_logCorrelation.PushCorrelation(executionId, step.StepName, "Success", stopwatch.ElapsedMilliseconds))
                     {

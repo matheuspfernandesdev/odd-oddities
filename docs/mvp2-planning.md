@@ -422,7 +422,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 > **Atenção ao `/implement-all-prd`:** este documento (`mvp2-planning.md`) não é lido pelo command — ele extrai RFs apenas de `docs/prd.md`. Após implementar/copiar esta seção para o `prd.md` (ou ajustar o command), os RFs abaixo são implementados **nesta ordem**; cada um compila e testa isoladamente.
 
-## [ ] RF-13: Outcome Skipped no pipeline
+## [x] RF-13: Outcome Skipped no pipeline
 
 **User Story:** Como dono, quero que steps que não se aplicam à execução sejam pulados sem falhar o pipeline, para que a decisão vídeo/imagem conviva com o foreach sequencial atual.
 
