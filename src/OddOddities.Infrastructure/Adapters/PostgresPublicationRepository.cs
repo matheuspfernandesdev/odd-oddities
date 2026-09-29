@@ -37,6 +37,14 @@ public sealed class PostgresPublicationRepository : IPublicationRepository
     /// <inheritdoc />
     public async Task UpdateAsync(Publication publication, CancellationToken cancellationToken = default)
     {
+        // Guard against EF Core identity conflict when another instance with the
+        // same key is already tracked in the scoped DbContext.
+        var tracked = _context.Publications.Local.FirstOrDefault(p => p.Id == publication.Id);
+        if (tracked is not null && !ReferenceEquals(tracked, publication))
+        {
+            _context.Entry(tracked).State = EntityState.Detached;
+        }
+
         _context.Publications.Update(publication);
         await _context.SaveChangesAsync(cancellationToken);
     }

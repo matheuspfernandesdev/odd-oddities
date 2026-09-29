@@ -264,6 +264,16 @@ docker exec -it odd-oddities-worker /bin/sh
 
 ## Troubleshooting
 
+### Workflow falha no Setup SSH com `Error loading key "(stdin)": error in libcrypto`
+- O secret `SSH_PRIVATE_KEY` esta malformado. Causas comuns:
+  - **CRLF (`\r\n`)** - chave colada a partir de terminal/Notepad no Windows
+  - **Sem newline final** apos `-----END OPENSSH PRIVATE KEY-----`
+  - **Chave publica** (`id_ed25519.pub`) no lugar da privada
+  - **Copia truncada** (quebra de linha do terminal copiando o `cat`)
+- O step `Setup SSH` agora normaliza (`tr -d '\r'` + newline final) e **valida a chave com `ssh-keygen -y`** antes de seguir - se a chave continuar invalida, o job falha com uma mensagem `::error::` clara apontando o secret
+- Solucao: na VPS rode `ssh-keygen -y -f ~/.ssh/id_ed25519` (deve imprimir a pubkey = chave valida) e depois `cat ~/.ssh/id_ed25519` e re-cole o conteudo inteiro no secret `SSH_PRIVATE_KEY`
+- Alternativa se a re-cola continuar falhando: guarde em base64 (`base64 -w0 ~/.ssh/id_ed25519`), cole o base64 no secret e decodifique no workflow
+
 ### Workflow falha com erro SSH
 - Verificar se `SSH_PRIVATE_KEY` esta correta (Passo 1.6 - `cat ~/.ssh/id_ed25519`, com as linhas BEGIN/END)
 - Verificar se a chave **publica** correspondente esta em `~/.ssh/authorized_keys` da VPS

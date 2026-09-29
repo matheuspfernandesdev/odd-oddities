@@ -14,6 +14,14 @@ public interface IInstagramPublishingPort
         string creationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Reads the processing status_code of a media container (FINISHED/ERROR/EXPIRED/PROCESSING).
+    /// The container must reach FINISHED before it can be published.
+    /// </summary>
+    Task<string> GetContainerStatusAsync(
+        string containerId,
+        CancellationToken cancellationToken = default);
+
     Task<(string Status, string StatusCode, string? Permalink)> GetMediaStatusAsync(
         string mediaId,
         CancellationToken cancellationToken = default);

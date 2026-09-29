@@ -17,6 +17,8 @@ namespace OddOddities.Infrastructure.Adapters;
 /// </summary>
 public sealed class ImageSharpProcessingService : IImageProcessingPort
 {
+    private static readonly string[] PreferredFontFamilies = { "Arial", "Liberation Sans" };
+
     private readonly ImageProcessingConfiguration _config;
     private readonly ILogger<ImageSharpProcessingService> _logger;
 
@@ -92,7 +94,7 @@ public sealed class ImageSharpProcessingService : IImageProcessingPort
 
     private void AddWatermark(Image<Rgba32> image)
     {
-        var font = SystemFonts.CreateFont("Arial", _config.WatermarkFontSize, FontStyle.Regular);
+        var font = CreateWatermarkFont();
 
         var textOptions = new RichTextOptions(font)
         {
@@ -105,13 +107,37 @@ public sealed class ImageSharpProcessingService : IImageProcessingPort
 
         var brush = Brushes.Solid(Color.White.WithAlpha(0.7f));
 
-        image.Mutate(ctx => ctx.Paint(canvas =>
+        image.Mutate(ctx => ctx.DrawText(
+            textOptions,
+            _config.WatermarkText,
+            brush,
+            pen: null));
+    }
+
+    private Font CreateWatermarkFont()
+    {
+        var size = _config.WatermarkFontSize;
+
+        foreach (var familyName in PreferredFontFamilies)
         {
-            canvas.DrawText(
-                textOptions,
-                _config.WatermarkText,
-                brush,
-                pen: null);
-        }));
+            if (SystemFonts.Collection.TryGet(familyName, out var family))
+            {
+                _logger.LogDebug("Watermark font resolved: {FontFamily}", familyName);
+                return family.CreateFont(size, FontStyle.Regular);
+            }
+        }
+
+        foreach (var family in SystemFonts.Families)
+        {
+            _logger.LogWarning(
+                "Preferred watermark fonts ({PreferredFonts}) not found; using first system font: {FontFamily}",
+                string.Join(", ", PreferredFontFamilies),
+                family.Name);
+            return family.CreateFont(size, FontStyle.Regular);
+        }
+
+        throw new InvalidOperationException(
+            "No system font available for the watermark. " +
+            "Install a font package in the container (e.g. fonts-liberation).");
     }
 }

@@ -38,6 +38,15 @@ public sealed class PostgresPostRepository : IPostRepository
     /// <inheritdoc />
     public async Task UpdateAsync(Post post, CancellationToken cancellationToken = default)
     {
+        // Guard against EF Core identity conflict: GetByIdAsync returns a detached
+        // instance (AsNoTracking) while another instance with the same key may still
+        // be tracked from a prior CreateAsync/UpdateAsync in the same scoped DbContext.
+        var tracked = _context.Posts.Local.FirstOrDefault(p => p.Id == post.Id);
+        if (tracked is not null && !ReferenceEquals(tracked, post))
+        {
+            _context.Entry(tracked).State = EntityState.Detached;
+        }
+
         _context.Posts.Update(post);
         await _context.SaveChangesAsync(cancellationToken);
     }

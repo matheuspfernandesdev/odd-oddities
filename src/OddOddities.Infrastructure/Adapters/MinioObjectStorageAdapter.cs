@@ -239,7 +239,14 @@ public sealed class MinioObjectStorageAdapter : IObjectStoragePort, IDisposable
     /// </summary>
     private static IAmazonS3 CreateS3Client(MinioConfiguration config)
     {
-        var endpoint = config.Endpoint;
+        var endpoint = config.Endpoint
+            ?? throw new InvalidOperationException(
+                "MinIO Endpoint is not configured. Set AppConfiguration:MinIO:Endpoint in appsettings or user secrets.");
+
+        if (string.IsNullOrWhiteSpace(endpoint))
+            throw new InvalidOperationException(
+                "MinIO Endpoint is empty. Set AppConfiguration:MinIO:Endpoint in appsettings or user secrets.");
+
         var useHttp = true;
 
         if (endpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase))

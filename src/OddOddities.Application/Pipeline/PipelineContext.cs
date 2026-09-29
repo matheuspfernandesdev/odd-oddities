@@ -16,6 +16,12 @@ public sealed class PipelineContext
     public ImageContext Image { get; set; } = new(string.Empty, 0, 0, 0);
     public PublicationContext Publication { get; set; } = new(string.Empty, string.Empty, string.Empty, string.Empty);
 
+    /// <summary>
+    /// Accumulated USD cost of this pipeline execution (text + image), used to
+    /// enforce ModelSelection.MaxCostPerRunUsd across generation attempts.
+    /// </summary>
+    public decimal AccumulatedCostUsd { get; set; }
+
     public static PipelineContext Create(
         string executionId,
         Category category,

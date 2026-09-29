@@ -1,18 +1,17 @@
-using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using OddOddities.Application.DependencyInjection;
-using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
 using OddOddities.Infrastructure.Data;
 using OddOddities.Infrastructure.DependencyInjection;
 using OddOddities.Infrastructure.Logging;
 using OddOddities.Infrastructure.Middleware;
+using OddOddities.Worker;
 using OddOddities.Worker.HealthChecks;
 using OddOddities.Worker.StartupTasks;
 using Serilog;
 using Serilog.Formatting.Compact;
-using OddOddities.Worker;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +28,9 @@ builder.Host.UseSerilog(dispose: true);
 
 builder.Services.Configure<AppConfiguration>(
     builder.Configuration.GetSection(AppConfiguration.SectionName));
+
+builder.Services.Configure<MinioConfiguration>(
+    builder.Configuration.GetSection($"{AppConfiguration.SectionName}:MinIO"));
 
 builder.Services.AddDbContext<OddOdditiesDbContext>(options =>
 {
@@ -57,6 +59,11 @@ builder.Services.AddHostedService<ApplyMigrationsHostedService>();
 builder.Services.AddHostedService<Worker>();
 
 var app = builder.Build();
+
+var minioConfig = app.Services.GetRequiredService<IOptions<MinioConfiguration>>().Value;
+Log.Information(
+    "MinIO config loaded: Endpoint={Endpoint}, Bucket={Bucket}, PublicEndpoint={PublicEndpoint}, HasAccessKey={HasAccessKey}",
+    minioConfig.Endpoint, minioConfig.BucketName, minioConfig.PublicEndpoint, !string.IsNullOrEmpty(minioConfig.AccessKey));
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 app.MapHealthChecks("/health");

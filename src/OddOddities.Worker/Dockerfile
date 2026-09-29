@@ -20,6 +20,11 @@ RUN dotnet publish src/OddOddities.Worker/OddOddities.Worker.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
+# Fonts for the ImageSharp watermark (Liberation Sans is metric-compatible with Arial)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-liberation fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN addgroup --system --gid 1001 appgroup && \
     adduser --system --uid 1001 --ingroup appgroup appuser

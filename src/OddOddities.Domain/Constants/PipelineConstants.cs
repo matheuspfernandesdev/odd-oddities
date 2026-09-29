@@ -12,9 +12,38 @@ public static class PipelineConstants
     public const int MaxGenerationAttempts = 3;
 
     /// <summary>
-    /// Maximum number of polling attempts when checking Instagram publication status.
+    /// Initial delay in seconds before retrying a transient API error (ADR-007).
     /// </summary>
-    public const int MaxPollingAttempts = 30;
+    public const int RetryBaseDelaySeconds = 10;
+
+    /// <summary>
+    /// Exponential backoff multiplier applied per attempt (ADR-007).
+    /// </summary>
+    public const int RetryMultiplier = 2;
+
+    /// <summary>
+    /// Maximum delay in seconds between retries (ADR-007).
+    /// </summary>
+    public const int RetryMaxDelaySeconds = 120;
+
+    /// <summary>
+    /// Maximum number of attempts to wait for the Instagram media container to reach
+    /// FINISHED before publishing. Publishing a container that is still processing
+    /// makes the Meta API reject the media_publish call.
+    /// </summary>
+    public const int MaxContainerPollingAttempts = 15;
+
+    /// <summary>
+    /// Maximum number of attempts to read the permalink of an already published media.
+    /// Best effort: a missing permalink does not fail the publication.
+    /// </summary>
+    public const int MaxPermalinkPollingAttempts = 6;
+
+    /// <summary>
+    /// Hard upper bound (in seconds) for the whole publication step, so a stalled Meta
+    /// API call can never block the pipeline indefinitely.
+    /// </summary>
+    public const int PublicationStepTimeoutSeconds = 240;
 
     /// <summary>
     /// Polling interval in seconds between Instagram status checks.
@@ -40,6 +69,17 @@ public static class PipelineConstants
     /// Window in days for similarity search (BR-005).
     /// </summary>
     public const int SimilaritySearchWindowDays = 90;
+
+    /// <summary>
+    /// Estimated prompt tokens used to estimate text generation cost before the call
+    /// (candidate budget filtering).
+    /// </summary>
+    public const int EstimatedPromptTokens = 1500;
+
+    /// <summary>
+    /// Estimated completion tokens used to estimate text generation cost before the call.
+    /// </summary>
+    public const int EstimatedCompletionTokens = 600;
 }
 
 /// <summary>

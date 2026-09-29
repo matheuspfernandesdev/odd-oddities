@@ -8,7 +8,12 @@ namespace OddOddities.Domain.Entities;
 public sealed class GenerationAttempt
 {
     public long Id { get; set; }
-    public long PostId { get; set; }
+
+    /// <summary>
+    /// Owning post. Null for text-generation attempts recorded before the Post
+    /// row exists (or when the pipeline aborted before Post creation).
+    /// </summary>
+    public long? PostId { get; set; }
     public int AttemptNumber { get; set; }
     public string ModelId { get; set; } = string.Empty;
     public AttemptStatus Status { get; set; }

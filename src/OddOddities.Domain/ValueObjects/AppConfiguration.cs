@@ -15,6 +15,7 @@ public sealed class AppConfiguration
 
     public ConnectionStringsConfiguration ConnectionStrings { get; set; } = new();
     public OpenRouterConfiguration OpenRouter { get; set; } = new();
+    public ModelSelectionConfiguration ModelSelection { get; set; } = new();
     public MetaConfiguration Meta { get; set; } = new();
     public MinioConfiguration MinIO { get; set; } = new();
     public TokenEncryptionConfiguration TokenEncryption { get; set; } = new();
@@ -39,6 +40,33 @@ public sealed class OpenRouterConfiguration
     public string BaseUrl { get; set; } = "https://openrouter.ai/api/v1";
     public string TextModelId { get; set; } = string.Empty;
     public string ImageModelId { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Model selection / fallback configuration. Controls how many distinct models are
+/// tried per step and the cost ceilings applied when building the candidate chain
+/// from the OpenRouter model catalog. All values have code defaults, so the section
+/// is optional in appsettings.
+/// </summary>
+public sealed class ModelSelectionConfiguration
+{
+    /// <summary>Max distinct text models tried per pipeline run (fallback cap).</summary>
+    public int MaxTextModelAttempts { get; set; } = 5;
+
+    /// <summary>Max distinct image models tried per pipeline run (fallback cap).</summary>
+    public int MaxImageModelAttempts { get; set; } = 3;
+
+    /// <summary>Max total cost (USD) for a single pipeline execution (text + image).</summary>
+    public decimal MaxCostPerRunUsd { get; set; } = 0.05m;
+
+    /// <summary>Max estimated cost (USD) per text request for a candidate to enter the chain.</summary>
+    public decimal MaxTextCostPerRequestUsd { get; set; } = 0.01m;
+
+    /// <summary>Max estimated cost (USD) per image request for a candidate to enter the chain.</summary>
+    public decimal MaxImageCostPerRequestUsd { get; set; } = 0.05m;
+
+    /// <summary>Minimum context length for a text model to be considered a candidate.</summary>
+    public int MinContextLength { get; set; } = 8000;
 }
 
 /// <summary>

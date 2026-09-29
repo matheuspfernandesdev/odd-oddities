@@ -2,7 +2,7 @@
 
 ## Status
 
-Aceito
+Nao implementado — substituido na pratica pelo fallback dinamico de modelos do [ADR-008](./ADR-008-modelo-dinamico-fallback-custo.md) (uma falha de modelo avanca para o proximo candidato em vez de re-tentar o mesmo com backoff).
 
 ## Contexto
 

@@ -25,7 +25,7 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddSingleton<ISchedulerPort, ScheduleService>();
         services.AddSingleton<IClock, SystemClock>();
-        services.AddScoped<ILogCorrelationPort, LogCorrelationService>();
+        services.AddSingleton<ILogCorrelationPort, LogCorrelationService>();
 
         services.AddHttpClient(nameof(SourceValidationService), client =>
         {
@@ -47,17 +47,27 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<ITokenEncryptionPort, TokenEncryptionService>();
         services.AddScoped<ITokenRenewalPort, TokenRenewalService>();
 
-        services.AddHttpClient<ITextGenerationPort, OpenRouterTextGenerationAdapter>(client =>
+        services.AddHttpClient<ITextGenerationPort, OpenRouterTextGenerationAdapter>((sp, client) =>
         {
-            client.BaseAddress = new Uri("https://openrouter.ai/api/v1/");
+            var config = sp.GetRequiredService<IOptions<AppConfiguration>>().Value.OpenRouter;
+            client.BaseAddress = new Uri(EnsureTrailingSlash(config.BaseUrl));
             client.Timeout = TimeSpan.FromSeconds(60);
             client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
         });
 
-        services.AddHttpClient<IImageGenerationPort, OpenRouterImageGenerationAdapter>(client =>
+        services.AddHttpClient<IImageGenerationPort, OpenRouterImageGenerationAdapter>((sp, client) =>
         {
-            client.BaseAddress = new Uri("https://openrouter.ai/api/v1/");
+            var config = sp.GetRequiredService<IOptions<AppConfiguration>>().Value.OpenRouter;
+            client.BaseAddress = new Uri(EnsureTrailingSlash(config.BaseUrl));
             client.Timeout = TimeSpan.FromMinutes(2);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
+        });
+
+        services.AddHttpClient<IModelCatalogPort, OpenRouterModelCatalogAdapter>((sp, client) =>
+        {
+            var config = sp.GetRequiredService<IOptions<AppConfiguration>>().Value.OpenRouter;
+            client.BaseAddress = new Uri(EnsureTrailingSlash(config.BaseUrl));
+            client.Timeout = TimeSpan.FromSeconds(30);
             client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
         });
 
@@ -69,5 +79,13 @@ public static class InfrastructureServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    private static string EnsureTrailingSlash(string baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = "https://openrouter.ai/api/v1";
+
+        return baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/";
     }
 }

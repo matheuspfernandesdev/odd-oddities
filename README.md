@@ -1,19 +1,36 @@
 # Odd Oddities
 
-Automacao de postagens para o perfil de Instagram **Odd Oddities**.
+Este e o projeto que automatiza o perfil do Instagram [**@oddities.odd**](https://www.instagram.com/oddities.odd/) utilizando inteligencia artificial, algoritmos de similaridade e publicacao via API oficial da Meta.
 
-O Worker .NET em Docker gera, em tres publicacoes semanais, uma curiosidade factual em ingles e uma ilustracao artistica gerada por IA, e publica no Instagram via Meta Graph API. As imagens sao armazenadas em um MinIO local protegido por Nginx com TLS.
+O Worker .NET em Docker roda um pipeline que, tres vezes por semana, gera automaticamente uma curiosidade factual bizarra (em ingles), uma ilustracao artistica criada por IA no estilo surrealista/poetico da pagina, e publica o post no feed do Instagram sem intervencao humana.
+
+## Como funciona
+
+O pipeline (`TextGeneration` → `ImageGeneration` → `Publication`) executado pelo `PipelineOrchestrator`:
+
+1. **Geracao de texto** — um LLM (via OpenRouter) escreve uma curiosidade factual com titulo, resumo e fonte.
+2. **Geracao de imagem** — um modelo de imagem (via OpenRouter) cria a arte correspondente, processada com ImageSharp (formato/quadrado, marca d'agua).
+3. **Publicacao** — a imagem vai para o MinIO e o post e publicado no Instagram via Meta Graph API.
+
+Os modelos preferidos e a cadeia de fallback (com limites de custo) sao configuraveis dinamicamente — se o modelo principal falha ou estoura o orcamento, o proximo da lista assume.
+
+## Regras do pipeline
+
+- **Conteudo em ingles**, no escopo "odd oddities" (curiosidades estranhas e reais).
+- **Anti-repeticao**: `ContentHash` (SHA-256) rejeita textos duplicados exatos.
+- **Similaridade textual**: algoritmo de Jaccard sobre tokens normalizados compara o resumo com os posts dos ultimos 90 dias; similaridade >= 80% rejeita o conteudo (BR-005).
+- **Retentativas**: conteudo rejeitado re-tenta a geracao ate 3 vezes; erros transitorios de API usam retry com backoff (validacao/rejeicao de negocio nao retenta).
+- **Auditoria**: cada tentativa de geracao e registrada no PostgreSQL (`GenerationAttempt`).
 
 ## Stack
 
-- .NET 8 Worker em Docker
-- PostgreSQL 16 (relacional)
-- MinIO (object storage compativel com S3)
-- Nginx + Let's Encrypt (reverse proxy HTTPS)
+- .NET 8 Worker (arquitetura hexagonal) em Docker
+- PostgreSQL 16 (persistencia e consultas de similaridade)
+- MinIO (object storage compativel com S3) + Nginx + Let's Encrypt
 - OpenRouter (geracao de texto e imagem)
+- ImageSharp (processamento visual)
 - Meta Instagram Graph API (publicacao)
-- GitHub Actions + GHCR (CI/CD)
-- Docker Compose na VPS
+- GitHub Actions + GHCR (CI/CD), Docker Compose na VPS
 
 ## Estrutura do repositorio
 
@@ -21,7 +38,6 @@ O Worker .NET em Docker gera, em tres publicacoes semanais, uma curiosidade fact
 docs/
   architecture.md          # Decisoes arquiteturais e ADRs consolidados
   prd.md                   # Product Requirements Document
-  to-be-determined.md      # Decisoes pendentes
   adr/                     # Architecture Decision Records
   nginx.md                 # Tutorial Nginx + Let's Encrypt + Certbot (Ubuntu LTS)
   instagram-api.md         # Tutorial Instagram Graph API do zero
@@ -47,8 +63,11 @@ A documentacao completa esta em `docs/`. O fluxo geral:
 
 - [Visao geral e arquitetura](docs/architecture.md)
 - [PRD](docs/prd.md)
-- [Pendencias](docs/to-be-determined.md)
 - [ADRs](docs/adr/)
 - [Tutorial Nginx](docs/nginx.md)
 - [Tutorial Instagram API](docs/instagram-api.md)
 - [Tutorial OpenRouter](docs/openrouter.md)
+
+---
+
+Tudo isso existe por um motivo: manter o [@oddities.odd](https://www.instagram.com/oddities.odd/) postando curiosidades incomuns com arte gerada por IA, sozinho, semana apos semana. Segue la! 🧿

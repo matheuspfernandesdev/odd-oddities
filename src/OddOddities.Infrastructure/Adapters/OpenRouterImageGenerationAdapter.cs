@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OddOddities.Domain.Exceptions;
 using OddOddities.Domain.Interfaces;
 using OddOddities.Domain.ValueObjects;
 
@@ -10,8 +12,9 @@ namespace OddOddities.Infrastructure.Adapters;
 
 /// <summary>
 /// OpenRouter implementation of IImageGenerationPort.
-/// Calls OpenRouter image generation API to create artistic illustrations.
-/// Returns raw PNG image bytes for downstream processing.
+/// Calls POST /api/v1/images to create artistic illustrations.
+/// Returns raw image bytes for downstream processing. The model id is provided
+/// by the caller so the pipeline can run a dynamic fallback chain.
 /// </summary>
 public sealed class OpenRouterImageGenerationAdapter : IImageGenerationPort
 {
@@ -36,27 +39,31 @@ public sealed class OpenRouterImageGenerationAdapter : IImageGenerationPort
     }
 
     /// <inheritdoc />
-    public async Task<byte[]> GenerateImageAsync(
+    public async Task<ImageGenerationResult> GenerateImageAsync(
         string prompt,
+        string modelId,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(prompt))
             throw new ArgumentException("Prompt cannot be null or empty.", nameof(prompt));
 
+        if (string.IsNullOrWhiteSpace(modelId))
+            throw new ArgumentException("ModelId cannot be null or empty.", nameof(modelId));
+
         _logger.LogInformation(
             "Generating image using model {ModelId}, prompt length={PromptLength}",
-            _config.ImageModelId,
+            modelId,
             prompt.Length);
 
         var request = new
         {
-            model = _config.ImageModelId,
+            model = modelId,
             prompt = $"A poetic surreal illustration about {prompt}. " +
                      "Artistic, dreamlike quality, suitable for Instagram. " +
                      "No text or watermarks in the image."
         };
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "images/generations")
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "images")
         {
             Content = JsonContent.Create(request, options: JsonOptions)
         };
@@ -65,15 +72,41 @@ public sealed class OpenRouterImageGenerationAdapter : IImageGenerationPort
         httpRequest.Headers.Add("HTTP-Referer", "https://odd-oddities.com");
         httpRequest.Headers.Add("X-Title", "Odd Oddities");
 
+        var stopwatch = Stopwatch.StartNew();
         var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
-        response.EnsureSuccessStatusCode();
 
-        var responseBody = await response.Content.ReadFromJsonAsync<ImageGenerationResponse>(
-            JsonOptions, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            stopwatch.Stop();
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new OpenRouterModelException(
+                modelId,
+                (int)response.StatusCode,
+                $"OpenRouter image generation failed for model {modelId}: {(int)response.StatusCode} {Truncate(errorBody, 300)}");
+        }
+
+        ImageGenerationResponse? responseBody;
+        try
+        {
+            responseBody = await response.Content.ReadFromJsonAsync<ImageGenerationResponse>(
+                JsonOptions, cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            stopwatch.Stop();
+            throw new OpenRouterModelException(
+                modelId,
+                (int)response.StatusCode,
+                $"OpenRouter image response for model {modelId} was not valid JSON.",
+                ex);
+        }
 
         if (responseBody?.Data is null || responseBody.Data.Length == 0)
         {
-            throw new InvalidOperationException("OpenRouter returned an empty image response.");
+            throw new OpenRouterModelException(
+                modelId,
+                (int)response.StatusCode,
+                $"OpenRouter returned an empty image response for model {modelId}.");
         }
 
         var imageData = responseBody.Data[0];
@@ -82,7 +115,6 @@ public sealed class OpenRouterImageGenerationAdapter : IImageGenerationPort
 
         if (!string.IsNullOrEmpty(imageData.B64Json))
         {
-            // Response contains base64-encoded image
             imageBytes = Convert.FromBase64String(imageData.B64Json);
             _logger.LogInformation(
                 "Image generated from base64: {SizeBytes} bytes",
@@ -90,7 +122,6 @@ public sealed class OpenRouterImageGenerationAdapter : IImageGenerationPort
         }
         else if (!string.IsNullOrEmpty(imageData.Url))
         {
-            // Response contains a URL to download the image
             _logger.LogInformation("Downloading image from URL: {Url}", imageData.Url);
             imageBytes = await _httpClient.GetByteArrayAsync(imageData.Url, cancellationToken);
             _logger.LogInformation(
@@ -99,11 +130,36 @@ public sealed class OpenRouterImageGenerationAdapter : IImageGenerationPort
         }
         else
         {
-            throw new InvalidOperationException(
-                "OpenRouter image response contains neither base64 data nor URL.");
+            throw new OpenRouterModelException(
+                modelId,
+                (int)response.StatusCode,
+                $"OpenRouter image response for model {modelId} contains neither base64 data nor URL.");
         }
 
-        return imageBytes;
+        stopwatch.Stop();
+
+        var costUsd = responseBody.Usage?.Cost;
+
+        _logger.LogInformation(
+            "Image generated: ModelId={ModelId}, SizeBytes={SizeBytes}, CostUsd={CostUsd}, DurationMs={DurationMs}",
+            modelId,
+            imageBytes.Length,
+            costUsd,
+            stopwatch.ElapsedMilliseconds);
+
+        return new ImageGenerationResult(
+            ImageBytes: imageBytes,
+            ModelId: modelId,
+            CostUsd: costUsd,
+            DurationMs: stopwatch.ElapsedMilliseconds);
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        return value.Length <= maxLength ? value : value[..maxLength] + "...";
     }
 
     private sealed class ImageGenerationResponse
@@ -127,6 +183,6 @@ public sealed class OpenRouterImageGenerationAdapter : IImageGenerationPort
     private sealed class ImageUsageInfo
     {
         [JsonPropertyName("cost")]
-        public decimal Cost { get; set; }
+        public decimal? Cost { get; set; }
     }
 }

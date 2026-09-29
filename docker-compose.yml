@@ -10,7 +10,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
-      - AppConfiguration__ConnectionStrings__DefaultConnection=Host=postgres:5432;Database=odd_oddities;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Maximum Pool Size=20;Minimum Pool Size=2
+      - ConnectionStrings__DefaultConnection=Host=postgres:5432;Database=${POSTGRES_DB:-odd_oddities};Username=${POSTGRES_USER:-odd_oddities};Password=${POSTGRES_PASSWORD};Maximum Pool Size=20;Minimum Pool Size=2
       - AppConfiguration__OpenRouter__ApiKey=${OPENROUTER_API_KEY}
       - AppConfiguration__OpenRouter__TextModelId=${TEXT_MODEL_ID}
       - AppConfiguration__OpenRouter__ImageModelId=${IMAGE_MODEL_ID}

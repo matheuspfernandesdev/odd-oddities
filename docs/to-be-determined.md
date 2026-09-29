@@ -43,8 +43,8 @@
 - **Estagio de origem**: Stage 7 - Integracoes Externas.
 - **Descricao**: Escolher um modelo de imagem alternativo caso `meta/muse-image` fique indisponivel por periodo prolongado.
 - **Contexto**: Recomenda-se escolher um segundo modelo para fallback automatico. Opcoes conhecidas na data da POC: `google/gemini-2.5-flash-image` (USD 0.30/1M output), `openai/gpt-image-1-mini`, `recraft/recraft-v4-styles`.
-- **Status**: Open
-- **Como resolver**: Avaliar custo/qualidade e adicionar `IMAGE_FALLBACK_MODEL_ID` em `SystemSettings`.
+- **Status**: Resolvido — ver "Itens Resolvidos" (PEND-005).
+- **Como resolver**: ~~Avaliar custo/qualidade e adicionar `IMAGE_FALLBACK_MODEL_ID` em `SystemSettings`.~~
 
 ### PEND-006 - Politica de upgrade da VPS
 
@@ -90,4 +90,4 @@ Nenhum estagio foi pulado. Todos os 23 estagios do processo foram concluidos ou 
 
 Itens resolvidos serao movidos para esta secao conforme decisoes forem tomadas.
 
-- (nenhum ate o momento)
+- **PEND-005 (2026-09-23)** — Fallback de modelo de imagem resolvido com **selecao dinamica** via catalogo OpenRouter (`GET /models`), sem lista fixa: cadeia preferido + dinamica com tetos de tentativas e custo. Default de imagem trocado de `meta/muse-image` (fora do catalogo) para `google/gemini-3.1-flash-lite-image`. Ver [ADR-008](./adr/ADR-008-modelo-dinamico-fallback-custo.md).

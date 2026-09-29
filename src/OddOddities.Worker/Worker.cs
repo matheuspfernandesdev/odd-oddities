@@ -1,9 +1,6 @@
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using OddOddities.Application.Abstractions;
 using OddOddities.Application.Pipeline;
 using OddOddities.Domain.Interfaces;
-using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.Worker;
 

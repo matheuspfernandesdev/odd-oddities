@@ -27,7 +27,17 @@ public sealed class PostgresGenerationAttemptRepository : IGenerationAttemptRepo
             throw new ArgumentNullException(nameof(attempt));
 
         _context.GenerationAttempts.Add(attempt);
-        await _context.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            _context.Entry(attempt).State = EntityState.Detached;
+            throw;
+        }
+
         return attempt;
     }
 

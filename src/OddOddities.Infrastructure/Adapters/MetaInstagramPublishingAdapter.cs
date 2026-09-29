@@ -59,7 +59,7 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, "media", cancellationToken);
 
         var result = await response.Content.ReadFromJsonAsync<MediaContainerResponse>(
             JsonOptions, cancellationToken);
@@ -95,7 +95,7 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, "media_publish", cancellationToken);
 
         var result = await response.Content.ReadFromJsonAsync<MediaContainerResponse>(
             JsonOptions, cancellationToken);
@@ -113,6 +113,36 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
     }
 
     /// <inheritdoc />
+    public async Task<string> GetContainerStatusAsync(
+        string containerId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(containerId))
+            throw new ArgumentException("Container ID cannot be null or empty.", nameof(containerId));
+
+        var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{containerId}" +
+                  $"?fields=status_code" +
+                  $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "container status", cancellationToken);
+
+        var result = await response.Content.ReadFromJsonAsync<MediaStatusResponse>(
+            JsonOptions, cancellationToken);
+
+        var statusCode = result?.StatusCode ?? "UNKNOWN";
+
+        _logger.LogDebug(
+            "Media container status: containerId={ContainerId}, statusCode={StatusCode}",
+            containerId,
+            statusCode);
+
+        return statusCode;
+    }
+
+    /// <inheritdoc />
     public async Task<(string Status, string StatusCode, string? Permalink)> GetMediaStatusAsync(
         string mediaId,
         CancellationToken cancellationToken = default)
@@ -125,25 +155,32 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
             mediaId);
 
         var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{mediaId}" +
-                  $"?fields=permalink" +
+                  $"?fields=status_code,permalink" +
                   $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, "media status", cancellationToken);
 
         var result = await response.Content.ReadFromJsonAsync<MediaStatusResponse>(
             JsonOptions, cancellationToken);
 
         var permalink = result?.Permalink;
-        var status = !string.IsNullOrEmpty(permalink) ? "PUBLISHED" : "PENDING";
-        var statusCode = status;
+        var statusCode = result?.StatusCode ?? "UNKNOWN";
+        var status = statusCode switch
+        {
+            "ERROR" => "ERROR",
+            "EXPIRED" => "EXPIRED",
+            _ when !string.IsNullOrEmpty(permalink) => "PUBLISHED",
+            _ => "PENDING"
+        };
 
         _logger.LogDebug(
-            "Media status: mediaId={MediaId}, status={Status}, permalink={Permalink}",
+            "Media status: mediaId={MediaId}, status={Status}, statusCode={StatusCode}, permalink={Permalink}",
             mediaId,
             status,
+            statusCode,
             permalink);
 
         return (status, statusCode, permalink);
@@ -166,7 +203,7 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, "refresh_access_token", cancellationToken);
 
         var result = await response.Content.ReadFromJsonAsync<TokenRefreshResponse>(
             JsonOptions, cancellationToken);
@@ -186,6 +223,28 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
         return (result.AccessToken, expiresAt);
     }
 
+    /// <summary>
+    /// Throws an <see cref="HttpRequestException"/> carrying the Meta error body, so the
+    /// failure reason stored on the Post explains why the API rejected the call.
+    /// </summary>
+    private static async Task EnsureSuccessAsync(
+        HttpResponseMessage response,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        throw new HttpRequestException(
+            $"Meta {operation} failed with {(int)response.StatusCode} ({response.ReasonPhrase}): {errorBody}",
+            null,
+            response.StatusCode);
+    }
+
     private sealed class MediaContainerResponse
     {
         [JsonPropertyName("id")]
@@ -196,6 +255,9 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
     {
         [JsonPropertyName("permalink")]
         public string? Permalink { get; set; }
+
+        [JsonPropertyName("status_code")]
+        public string? StatusCode { get; set; }
 
         [JsonPropertyName("id")]
         public string? Id { get; set; }

@@ -241,6 +241,7 @@ Eventos sao registrados por um publisher interno e logados no stdout. Nao ha eve
 
 - `ITextGenerationPort` - OpenRouter (texto).
 - `IImageGenerationPort` - OpenRouter (imagem).
+- `IModelCatalogPort` - OpenRouter (catalogo de modelos / precos).
 - `IInstagramPublishingPort` - Meta Graph API.
 - `IObjectStoragePort` - MinIO.
 - `IPostRepository` - PostgreSQL.
@@ -248,8 +249,10 @@ Eventos sao registrados por um publisher interno e logados no stdout. Nao ha eve
 
 ## Adapters (infraestrutura)
 
-- `OpenRouterTextAdapter` usa `POST /api/v1/chat/completions`.
-- `OpenRouterImageAdapter` usa `POST /api/v1/images`.
+- `OpenRouterTextGenerationAdapter` usa `POST /api/v1/chat/completions` (model id recebido do caller).
+- `OpenRouterImageGenerationAdapter` usa `POST /api/v1/images` (model id recebido do caller).
+- `OpenRouterModelCatalogAdapter` usa `GET /api/v1/models` (texto e imagem) para montar a cadeia de fallback.
+- `ModelSelectionService` (Application) monta a cadeia: modelo preferido + candidatos free/mais baratos dentro dos tetos de `ModelSelection`.
 - `InstagramPublishingAdapter` usa endpoints da Meta Graph API.
 - `MinioObjectStorageAdapter` usa SDK compativel com S3.
 - `PostgresPostRepository` usa EF Core + Npgsql.
@@ -262,12 +265,15 @@ Cron (PeriodicTimer)
   |
   v
 1. Selecionar Category e Subcategory menos usadas (90 dias)
+1b. Buscar catalogo de modelos OpenRouter (fallback silencioso p/ config se falhar)
 2. Post.Created (status=Generated)
 3. OpenRouterTextAdapter: gerar curiosidade (JSON)
+   - cadeia de modelos: preferido -> free -> mais barato (erros de modelo avancam)
+   - rejeicoes de conteudo re-tentam no mesmo modelo (max 3)
 4. Validar SourceUrl (HEAD)
 5. Validar tamanho e similaridade textual
 6. Post.Updated (status=Validated)
-7. OpenRouterImageAdapter: gerar imagem (b64)
+7. OpenRouterImageAdapter: gerar imagem (b64) com a mesma logica de cadeia
 8. ImageSharp: redimensionar, marca d'agua, JPEG ~85
 9. MinioObjectStorageAdapter: PutObject (chave UUID)
 10. Verificar quota MinIO (20 GB)
@@ -279,6 +285,8 @@ Cron (PeriodicTimer)
 16. Post.Updated (status=Published, PublishedAt=now)
 ```
 
+Budget por execucao: custos de texto+imagem acumulam em `PipelineContext.AccumulatedCostUsd` e sao limitados por `ModelSelection:MaxCostPerRunUsd`. Cada tentativa grava em `GenerationAttempt`.
+
 Em qualquer falha, o `Post` e marcado como `Failed` com `FailureStep`, `FailureReason`, `ErrorCode` e `FailureDetails` (sem segredos).
 
 # Decisoes Arquiteturais (ADR)
@@ -289,7 +297,8 @@ Em qualquer falha, o `Post` e marcado como `Failed` com `FailureStep`, `FailureR
 - [ADR-004 Clientes Separados para Texto e Imagem no OpenRouter](./adr/ADR-004-openrouter-clientes-separados.md)
 - [ADR-005 MinIO Privado com Nginx HTTPS](./adr/ADR-005-metadados-armazenamento-minio.md)
 - [ADR-006 Token Meta Renovado Criptografado no PostgreSQL](./adr/ADR-006-token-criptografado.md)
-- [ADR-007 Retry com Backoff Exponencial](./adr/ADR-007-retry-backoff.md)
+- [ADR-007 Retry com Backoff Exponencial](./adr/ADR-007-retry-backoff.md) (nao implementado)
+- [ADR-008 Selecao Dinamica de Modelos com Fallback e Budget](./adr/ADR-008-modelo-dinamico-fallback-custo.md)
 
 # Stack Tecnologica
 
@@ -338,8 +347,8 @@ Em qualquer falha, o `Post` e marcado como `Failed` com `FailureStep`, `FailureR
 
 | Provedor | Tipo | Autenticacao | SLA | Resiliencia |
 |---|---|---|---|---|
-| OpenRouter (texto) | REST, HTTPS | API key em header | Nao documentado | Retry 3x, backoff exponencial, log estruturado |
-| OpenRouter (imagem) | REST, HTTPS | API key em header | Nao documentado | Retry 3x, backoff exponencial, log estruturado |
+| OpenRouter (texto) | REST, HTTPS | API key em header | Nao documentado | Fallback de modelo (catalogo dinamico), budget por execucao, log estruturado |
+| OpenRouter (imagem) | REST, HTTPS | API key em header | Nao documentado | Fallback de modelo (catalogo dinamico), budget por execucao, log estruturado |
 | Meta Graph API | REST, HTTPS | Bearer token (long-lived) | Nao documentado | Retry 3x, backoff exponencial, polling de status |
 | MinIO | S3 API compativel | AccessKey/SecretKey interna | Auto-gerido | Sem retry para erros estruturais |
 
@@ -449,7 +458,7 @@ A primeira versao **nao expoe API propria**. O Worker e consumidor de APIs exter
 
 ```json
 {
-  "model": "meta/muse-image",
+  "model": "google/gemini-3.1-flash-lite-image",
   "prompt": "A poetic surreal illustration about..."
 }
 ```
@@ -553,6 +562,41 @@ A primeira versao **nao expoe API propria**. O Worker e consumidor de APIs exter
 
 - Aplicadas automaticamente no startup do Worker.
 
+## Configuration Layering (Regra Obrigatoria)
+
+A configuracao do projeto segue 3 camadas com papeis claros. **Nunca misturar segredos em arquivos rastreados pelo Git.**
+
+### Camada 1 — `appsettings.Development.json` (Git)
+Valores **nao-sensiveis** e defaults. Pode ficar no repositorio.
+- MinIO Endpoint (URL publica), BucketName, PublicEndpoint
+- OpenRouter ModelIds
+- Schedule, ImageProcessing
+- ConnectionStrings com **placeholder** (`Password=CHANGE_ME`)
+
+### Camada 2 — User Secrets (fora do Git)
+Valores **sensiveis**. Armazenados em `%APPDATA%\Microsoft\UserSecrets\`.
+- OpenRouter ApiKey
+- Meta AppId, AppSecret, AccessToken, InstagramUserId
+- MinIO AccessKey, SecretKey
+- TokenEncryption Key
+- `ConnectionStrings:DefaultConnection` (chave na **raiz**, não em `AppConfiguration:` — porque `GetConnectionString()` lê da raiz)
+
+### Camada 3 — `docker-compose.dev.yml` (Git)
+Infraestrutura local. Container PostgreSQL com volume permanente.
+- POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
+
+### Precedencia (quem ganha)
+1. `appsettings.json` (padrao)
+2. `appsettings.Development.json` (sobrescreve)
+3. **User Secrets** (sobrescreve anteriores)
+4. **Environment Variables** (sobrescreve tudo — usado em producao via docker-compose)
+
+### Em producao
+O `docker-compose.yml` do Worker injeta **tudo** via environment variables:
+- Variaveis de **GitHub Secrets** = valores sensiveis (AccessKey, ApiKey, etc.)
+- Variaveis de **GitHub Variables** = valores nao-sensiveis (ModelIds, Schedule, etc.)
+- Nao existe `appsettings.Production.json` nem User Secrets em producao
+
 # Observabilidade
 
 - Logs estruturados em JSON via Serilog, enviados para stdout.
@@ -617,7 +661,7 @@ A primeira versao **nao expoe API propria**. O Worker e consumidor de APIs exter
 | R9 | Seguranca | Chave AES comprometida | Alto | Baixa | Rotacao manual, recriptografia de tokens |
 | R10 | Seguranca | SSRF no MinIO publico | Medio | Baixa | Bloqueio de IPs internos, URL pre-assinada |
 | R11 | Infraestrutura | Certbot indisponivel na renovacao | Alto | Baixa | Job agendado, log de sucesso/falha |
-| R12 | Integracao | OpenRouter fora do ar | Alto | Baixa | Retry com backoff, logs estruturados |
+| R12 | Integracao | OpenRouter fora do ar | Alto | Baixa | Fallback de modelo via catalogo dinamico, logs estruturados |
 | R13 | Integracao | Meta fora do ar ou rate-limit | Medio | Baixa | Retry com backoff para 429/5xx |
 
 # Analise de Custos
@@ -626,7 +670,7 @@ A primeira versao **nao expoe API propria**. O Worker e consumidor de APIs exter
 |---|---|---|
 | VPS Contabo Cloud VPS 4 | EUR 4,50 / mes | Plano atual |
 | Dominio | ~USD 1 / mes | Ja existente |
-| OpenRouter imagem | USD 0,12 / mes | 12 posts x USD 0,01 |
+| OpenRouter imagem | < USD 0,01 / mes | 12 posts x ~USD 0,00003 (teto USD 0,05/execucao) |
 | OpenRouter texto | USD 0,00 / mes | Modelos gratuitos |
 | Meta Graph API | USD 0,00 / mes | Plano gratuito |
 | PostgreSQL | USD 0,00 / mes | Local |

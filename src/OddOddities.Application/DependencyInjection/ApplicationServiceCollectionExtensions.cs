@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using OddOddities.Application.Pipeline;
 using OddOddities.Application.Ports;
+using OddOddities.Application.Services;
 using OddOddities.Application.Steps;
 using OddOddities.Application.UseCases;
 using OddOddities.Domain.Interfaces;
@@ -15,6 +16,8 @@ public static class ApplicationServiceCollectionExtensions
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
         services.AddScoped<ICategorySelectionPort, SelectBalancedCategoryUseCase>();
+
+        services.AddScoped<IModelSelectionService, ModelSelectionService>();
 
         services.AddScoped<IPipelineStep, TextGenerationStep>();
         services.AddScoped<IPipelineStep, ImageGenerationStep>();

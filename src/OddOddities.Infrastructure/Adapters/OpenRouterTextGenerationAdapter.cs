@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -12,7 +13,8 @@ namespace OddOddities.Infrastructure.Adapters;
 /// <summary>
 /// OpenRouter implementation of ITextGenerationPort.
 /// Calls OpenRouter chat completions API to generate factual curiosity content.
-/// Uses structured JSON response format for reliable parsing.
+/// Uses structured JSON response format for reliable parsing. The model id is
+/// provided by the caller so the pipeline can run a dynamic fallback chain.
 /// </summary>
 public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
 {
@@ -37,9 +39,10 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
     }
 
     /// <inheritdoc />
-    public async Task<(string TextContent, string Summary, string Theme, string SourceUrl, string Category, string Subcategory)> GenerateCuriosityAsync(
+    public async Task<TextGenerationResult> GenerateCuriosityAsync(
         string category,
         string subcategory,
+        string modelId,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(category))
@@ -48,15 +51,18 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
         if (string.IsNullOrWhiteSpace(subcategory))
             throw new ArgumentException("Subcategory cannot be null or empty.", nameof(subcategory));
 
+        if (string.IsNullOrWhiteSpace(modelId))
+            throw new ArgumentException("ModelId cannot be null or empty.", nameof(modelId));
+
         _logger.LogInformation(
             "Generating curiosity for {Category}/{Subcategory} using model {ModelId}",
             category,
             subcategory,
-            _config.TextModelId);
+            modelId);
 
         var request = new
         {
-            model = _config.TextModelId,
+            model = modelId,
             messages = new[]
             {
                 new
@@ -94,20 +100,49 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
         httpRequest.Headers.Add("HTTP-Referer", "https://odd-oddities.com");
         httpRequest.Headers.Add("X-Title", "Odd Oddities");
 
+        var stopwatch = Stopwatch.StartNew();
         var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
-        response.EnsureSuccessStatusCode();
 
-        var responseBody = await response.Content.ReadFromJsonAsync<OpenRouterResponse>(
-            JsonOptions, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            stopwatch.Stop();
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new OpenRouterModelException(
+                modelId,
+                (int)response.StatusCode,
+                $"OpenRouter text generation failed for model {modelId}: {(int)response.StatusCode} {Truncate(errorBody, 300)}");
+        }
+
+        OpenRouterResponse? responseBody;
+        try
+        {
+            responseBody = await response.Content.ReadFromJsonAsync<OpenRouterResponse>(
+                JsonOptions, cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            stopwatch.Stop();
+            throw new OpenRouterModelException(
+                modelId,
+                (int)response.StatusCode,
+                $"OpenRouter text response for model {modelId} was not valid JSON.",
+                ex);
+        }
+
+        stopwatch.Stop();
 
         if (responseBody?.Choices is null || responseBody.Choices.Length == 0)
         {
-            throw new InvalidOperationException("OpenRouter returned an empty response.");
+            throw new OpenRouterModelException(
+                modelId,
+                (int)response.StatusCode,
+                $"OpenRouter returned an empty response for model {modelId}.");
         }
 
         var contentJson = responseBody.Choices[0].Message.Content;
 
         CuriosityPayload curiosity;
+
         try
         {
             curiosity = CuriosityJsonParser.Parse(contentJson);
@@ -117,25 +152,42 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
             _logger.LogWarning(
                 ex,
                 "Failed to parse curiosity JSON from model {ModelId}. Raw content: {RawContent}",
-                _config.TextModelId,
+                modelId,
                 contentJson);
             throw;
         }
 
+        var costUsd = responseBody.Usage?.Cost;
+
         _logger.LogInformation(
-            "Curiosity generated: TextLength={TextLength}, Theme={Theme}, SourceUrl={SourceUrl}",
+            "Curiosity generated: ModelId={ModelId}, TextLength={TextLength}, Theme={Theme}, SourceUrl={SourceUrl}, CostUsd={CostUsd}, DurationMs={DurationMs}",
+            modelId,
             curiosity.TextContent?.Length ?? 0,
             curiosity.Theme,
-            curiosity.SourceUrl);
+            curiosity.SourceUrl,
+            costUsd,
+            stopwatch.ElapsedMilliseconds);
 
-        return (
-            curiosity.TextContent ?? string.Empty,
-            curiosity.Summary ?? string.Empty,
-            curiosity.Theme ?? string.Empty,
-            curiosity.SourceUrl ?? string.Empty,
-            curiosity.Category ?? category,
-            curiosity.Subcategory ?? subcategory
-        );
+        return new TextGenerationResult(
+            TextContent: curiosity.TextContent ?? string.Empty,
+            Summary: curiosity.Summary ?? string.Empty,
+            Theme: curiosity.Theme ?? string.Empty,
+            SourceUrl: curiosity.SourceUrl ?? string.Empty,
+            Category: curiosity.Category ?? category,
+            Subcategory: curiosity.Subcategory ?? subcategory,
+            ModelId: modelId,
+            CostUsd: costUsd,
+            TokensIn: responseBody.Usage?.PromptTokens,
+            TokensOut: responseBody.Usage?.CompletionTokens,
+            DurationMs: stopwatch.ElapsedMilliseconds);
+    }
+
+    private static string Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        return value.Length <= maxLength ? value : value[..maxLength] + "...";
     }
 
     private sealed class OpenRouterResponse
@@ -169,5 +221,8 @@ public sealed class OpenRouterTextGenerationAdapter : ITextGenerationPort
 
         [JsonPropertyName("total_tokens")]
         public int TotalTokens { get; set; }
+
+        [JsonPropertyName("cost")]
+        public decimal? Cost { get; set; }
     }
 }

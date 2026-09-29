@@ -28,7 +28,7 @@ Para modelos gratuitos, nenhum credito e necessario. Para modelos pagos:
 3. Escolha o valor (minimo ~USD 5).
 4. Pague com cartao.
 
-Para a POC, o custo estimado e de **USD 0,12/mes** considerando `meta/muse-image` a USD 0,01 por imagem. USD 5 cobrem cerca de 4 anos de execucao.
+Para a POC, o custo estimado e de **USD 0,0004/mes** considerando `google/gemini-3.1-flash-lite-image` a ~USD 0,00003 por imagem (12 imagens/mes). Alem disso, o Worker impoe um teto de **USD 0,05 por execucao do pipeline** (`ModelSelection:MaxCostPerRunUsd`).
 
 ---
 
@@ -53,57 +53,63 @@ Para a POC, o custo estimado e de **USD 0,12/mes** considerando `meta/muse-image
 
 ## 6. Modelos recomendados para o Odd Oddities
 
+O Worker nao depende de uma lista fixa de fallback: **a cada execucao do pipeline** ele busca o catalogo de modelos na API do OpenRouter e monta uma cadeia de candidatos (preferido + dinamica). Veja "Resiliencia" na secao 11.
+
 ### Texto (gratuito)
 
-- **Principal:** `google/gemma-4-26b-a4b-it:free`
+- **Principal (config):** `google/gemma-4-26b-a4b-it:free`
   - Modelo multimodal leve.
-  - Suporta `response_format` JSON Schema.
+  - Suporta `response_format` JSON.
   - Custo: USD 0.
-- **Fallback:** `openai/gpt-oss-20b:free`
-  - Open-weight da OpenAI.
-  - Custo: USD 0.
+- **Fallback dinamico:** demais modelos `:free` (ou pricing `0`), ordenados do mais barato ao mais caro, ate `ModelSelection:MaxTextModelAttempts` (default 5) modelos distintos. O catalogo de modelos free rotaciona com o tempo — por isso a busca e por execucao.
 
-> Atencao: modelos gratuitos podem usar seus dados para melhorar os modelos do provedor. Nao envie informacoes sensiveis. Para esta POC o conteudo e publico.
+> Atencao: modelos gratuitos podem usar seus dados para melhorar os modelos do provedor. Nao envie informacoes sensiveis. Para esta POC o conteudo e publicado.
 
-### Imagem (pago)
+### Imagem (pago — nao existe modelo de imagem free)
 
-- **Principal:** `meta/muse-image`
-  - Preco atual: USD 0,01 por imagem.
-  - 12 imagens/mes custam USD 0,12.
-  - Suporta edicao, referencia e composicao.
-- **Possiveis alternativas** (caso o principal fique indisponivel):
-  - `google/gemini-2.5-flash-image`
-  - `openai/gpt-image-1-mini`
-  - `recraft/recraft-v4-styles` (requer imagem de referencia)
+- **Principal (config):** `google/gemini-3.1-flash-lite-image`
+  - Preco: ~USD 0,00003 por imagem (`pricing.image_output`).
+  - Modelo de imagem mais barato disponivel no catalogo (verificado em 2026-09).
+- **Fallback dinamico:** demais modelos com `output_modalities` contendo `image`, ordenados por `image_output` asc, ate `ModelSelection:MaxImageModelAttempts` (default 3) e dentro de `MaxImageCostPerRequestUsd` (default USD 0,05).
+
+> `meta/muse-image` **nao existe mais no catalogo** e foi substituido como default. Se a GitHub Variable `IMAGE_MODEL_ID` ainda apontar para ele, atualize o valor.
 
 ### Discovery API
 
-Para verificar quais modelos estao disponiveis e seus precos atualizados:
+O Worker usa estes endpoints (secao 11):
 
 ```text
-GET https://openrouter.ai/api/v1/models
-GET https://openrouter.ai/api/v1/images/models
+GET https://openrouter.ai/api/v1/models?output_modalities=text&sort=pricing-low-to-high
+GET https://openrouter.ai/api/v1/models?output_modalities=image
 ```
 
-Filtre por:
-
-- `output_modalities` (text ou image).
-- `supported_parameters` (structured_outputs, aspect_ratio).
+Cada modelo traz `pricing` (USD string por token/unidade), `architecture.output_modalities`, `context_length` etc. Free = id terminando em `:free` ou `pricing.prompt == "0"`.
 
 ---
 
 ## 7. Configurar modelos no Worker
 
-Os modelos sao configurados via variavel de ambiente:
+Modelos preferidos (primeiro da cadeia de fallback) via variavel de ambiente:
 
 | Variavel | Valor |
 |---|---|
 | `TEXT_MODEL_ID` | `google/gemma-4-26b-a4b-it:free` |
-| `TEXT_FALLBACK_MODEL_ID` | `openai/gpt-oss-20b:free` |
-| `IMAGE_MODEL_ID` | `meta/muse-image` |
-| `IMAGE_FALLBACK_MODEL_ID` | _(pendente)_ |
+| `IMAGE_MODEL_ID` | `google/gemini-3.1-flash-lite-image` |
 
-Esses valores podem ser ajustados em **GitHub Actions Variables** sem rebuild da imagem.
+Nao ha mais `TEXT_FALLBACK_MODEL_ID`/`IMAGE_FALLBACK_MODEL_ID`: os fallbacks vem do catalogo dinamico.
+
+Limites de fallback e custo (defaults no codigo; opcional no `appsettings.json`, secao `AppConfiguration:ModelSelection`):
+
+| Config | Default | Descricao |
+|---|---|---|
+| `MaxTextModelAttempts` | 5 | Max de modelos distintos de texto por execucao |
+| `MaxImageModelAttempts` | 3 | Max de modelos distintos de imagem por execucao |
+| `MaxCostPerRunUsd` | 0.05 | Teto de custo total (texto+imagem) por execucao |
+| `MaxTextCostPerRequestUsd` | 0.01 | Teto de custo estimado por request de texto para entrar na cadeia |
+| `MaxImageCostPerRequestUsd` | 0.05 | Teto de custo estimado por request de imagem para entrar na cadeia |
+| `MinContextLength` | 8000 | Contexto minimo para um modelo de texto ser candidato |
+
+`TEXT_MODEL_ID`/`IMAGE_MODEL_ID` podem ser ajustados em **GitHub Actions Variables** sem rebuild da imagem. A secao `ModelSelection` nao precisa de env vars (defaults no codigo).
 
 ---
 
@@ -170,7 +176,7 @@ Authorization: Bearer <OPENROUTER_API_KEY>
 Content-Type: application/json
 
 {
-  "model": "meta/muse-image",
+  "model": "google/gemini-3.1-flash-lite-image",
   "prompt": "A poetic surreal illustration about a luminous jellyfish drifting through deep ocean..."
 }
 ```
@@ -201,9 +207,14 @@ Esses headers **nao** sao obrigatorios, mas ajudam no ranking e na rastreabilida
 
 ## 11. Resiliencia implementada no Worker
 
-- Retry com backoff exponencial (3 tentativas, 10s, 20s, 40s, cap 120s).
-- Aplica-se a: timeout, erros de rede, HTTP 408, 429, 5xx.
+- **Busca do catalogo** (`GET /models`) no inicio de cada execucao do pipeline. Se falhar: log de warning e a cadeia fica apenas com o modelo da config (comportamento antigo). Nunca derruba o pipeline.
+- **Fallback de modelo:** erro de API/transporte/modelo invalido em um candidato avanca para o proximo da cadeia (free -> mais barato, dentro dos tetos), ate os limites `MaxTextModelAttempts`/`MaxImageModelAttempts`.
+- **Retry de conteudo:** rejeicoes de negocio (texto longo, hash duplicado, similaridade) re-tentam no mesmo modelo ate `MaxGenerationAttempts` (3).
+- **Budget:** antes de cada chamada estima-se o custo e compara com `MaxCostPerRunUsd - acumulado`; o custo real (`usage.cost`) e acumulado apos cada chamada. Estourou: falha `BUDGET_EXCEEDED`.
+- **Auditoria:** cada tentativa grava em `GenerationAttempt` (`ModelId`, `Status`, `CostUsd`, `TokensIn/Out`, `DurationMs`). Tentativas de texto antes da criacao do Post gravam `PostId = null`.
 - Logs estruturados com `modelId`, `costUsd`, `tokensIn`, `tokensOut`, `durationMs`.
+
+Ver [ADR-008](./adr/ADR-008-modelo-dinamico-fallback-custo.md).
 
 ---
 
@@ -211,11 +222,11 @@ Esses headers **nao** sao obrigatorios, mas ajudam no ranking e na rastreabilida
 
 | Item | Custo mensal |
 |---|---|
-| 12 imagens x USD 0,01 | USD 0,12 |
+| 12 imagens x ~USD 0,00003 | ~USD 0,0004 |
 | Texto (modelo gratuito) | USD 0,00 |
-| **Total IA** | **USD 0,12** |
+| **Total IA** | **< USD 0,01** |
 
-Para a POC, um credito de USD 5 dura cerca de 4 anos.
+Teto de seguranca por execucao: USD 0,05 (`MaxCostPerRunUsd`). Um credito de USD 5 dura anos.
 
 ---
 
@@ -228,7 +239,8 @@ Para a POC, um credito de USD 5 dura cerca de 4 anos.
 | 429 Too Many Requests | Rate limit | Aguardar e re-tentar |
 | `no endpoints found that support tool use` | Modelo nao suporta `response_format` | Trocar para modelo compativel |
 | Imagem Base64 ausente | Provedor retornou URL ou texto | Trocar para outro modelo de imagem |
-| Custo maior que esperado | Outro modelo foi escolhido | Revisar `IMAGE_MODEL_ID` |
+| Custo maior que esperado | Budget/estimativa incorreta | Revisar `ModelSelection` e `GenerationAttempt.CostUsd` |
+| Todos os modelos falham (`ALL_MODELS_FAILED`) | Catalogo/config invalidos | Verificar `TEXT_MODEL_ID`/`IMAGE_MODEL_ID` e logs de fallback |
 
 ---
 

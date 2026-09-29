@@ -100,6 +100,17 @@ public sealed class PipelineOrchestrator
                     return;
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                stopwatch.Stop();
+
+                _logger.LogWarning(
+                    "Pipeline cancelled while executing step {Step} for execution {ExecutionId}",
+                    step.StepName,
+                    executionId);
+
+                return;
+            }
             catch (Exception ex)
             {
                 stopwatch.Stop();
@@ -141,26 +152,38 @@ public sealed class PipelineOrchestrator
             return;
         }
 
-        var post = await _postRepository.GetByIdAsync(postId, cancellationToken);
-        if (post is null)
+        try
         {
-            _logger.LogWarning("Post {PostId} not found when marking as Failed", postId);
-            return;
+            var post = await _postRepository.GetByIdAsync(postId, cancellationToken);
+            if (post is null)
+            {
+                _logger.LogWarning("Post {PostId} not found when marking as Failed", postId);
+                return;
+            }
+
+            post.Status = PostStatus.Failed;
+            post.FailureStep = failureStep;
+            post.FailureReason = failureReason;
+            post.ErrorCode = errorCode;
+            post.FailureDetails = failureReason;
+            post.UpdatedAt = DateTime.UtcNow;
+
+            await _postRepository.UpdateAsync(post, cancellationToken);
+
+            _logger.LogWarning(
+                "Post {PostId} marked as Failed (step={FailureStep}, reason={FailureReason})",
+                postId,
+                failureStep,
+                failureReason);
         }
-
-        post.Status = PostStatus.Failed;
-        post.FailureStep = failureStep;
-        post.FailureReason = failureReason;
-        post.ErrorCode = errorCode;
-        post.FailureDetails = failureReason;
-        post.UpdatedAt = DateTime.UtcNow;
-
-        await _postRepository.UpdateAsync(post, cancellationToken);
-
-        _logger.LogWarning(
-            "Post {PostId} marked as Failed (step={FailureStep}, reason={FailureReason})",
-            postId,
-            failureStep,
-            failureReason);
+        catch (Exception ex)
+        {
+            // Marking the post as Failed must never mask the original step failure.
+            _logger.LogError(
+                ex,
+                "Failed to mark Post {PostId} as Failed (step={FailureStep})",
+                postId,
+                failureStep);
+        }
     }
 }

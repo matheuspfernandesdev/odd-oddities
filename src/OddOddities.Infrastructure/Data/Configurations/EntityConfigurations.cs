@@ -150,9 +150,12 @@ public class GenerationAttemptConfiguration : IEntityTypeConfiguration<Generatio
         builder.Property(ga => ga.CostUsd)
             .HasPrecision(10, 6);
 
+        // PostId is nullable: text-generation attempts may be recorded before the
+        // Post row exists (or when the pipeline aborts before Post creation).
         builder.HasOne(ga => ga.Post)
             .WithMany(p => p.GenerationAttempts)
-            .HasForeignKey(ga => ga.PostId);
+            .HasForeignKey(ga => ga.PostId)
+            .OnDelete(DeleteBehavior.ClientSetNull);
 
         builder.HasIndex(ga => new { ga.PostId, ga.AttemptNumber });
     }

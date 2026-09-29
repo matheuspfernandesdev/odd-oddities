@@ -833,7 +833,7 @@ Authorization: Bearer <OPENROUTER_API_KEY>
 Content-Type: application/json
 
 {
-  "model": "meta/muse-image",
+  "model": "google/gemini-3.1-flash-lite-image",
   "prompt": "A poetic surreal illustration about ..."
 }
 ```
