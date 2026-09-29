@@ -408,3 +408,6 @@ FodyWeavers.xsd
 # TLS certificates and nginx config
 certs/
 nginx.conf
+
+# Ephemeral implementation ledger created by /implement-all-prd
+docs/agents/ledger.md
