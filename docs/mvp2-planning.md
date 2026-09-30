@@ -460,7 +460,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-15: Decisão de modalidade por execução (imagem vs vídeo)
+## [x] RF-15: Decisão de modalidade por execução (imagem vs vídeo)
 
 **User Story:** Como dono, quero que cada execução decida uma única vez se gera vídeo ou imagem, para que a cadência "1 vídeo a cada 15 dias" seja automática.
 

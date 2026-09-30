@@ -20,4 +20,15 @@ public interface ISchedulerPort
     /// </summary>
     /// <returns>True if the pipeline should run now; otherwise, false.</returns>
     bool ShouldRunNow();
+
+    /// <summary>
+    /// Checks if the current pipeline execution must generate a video instead of an
+    /// image (RF-15). The rule compares today's date against the PublishedAt date of the
+    /// latest published Post that has a video (VideoObjectKey != null) using
+    /// AppConfiguration.Video.IntervalDays. When no video was ever published the answer
+    /// is true; when the underlying lookup fails the answer is false (image run, the
+    /// behavior that existed before videos were introduced).
+    /// </summary>
+    /// <returns>True if this execution is a video run; otherwise, false.</returns>
+    bool IsVideoRunToday();
 }

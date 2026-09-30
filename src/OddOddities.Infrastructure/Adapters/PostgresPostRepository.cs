@@ -152,6 +152,21 @@ public sealed class PostgresPostRepository : IPostRepository
     }
 
     /// <inheritdoc />
+    public async Task<DateTime?> GetLatestVideoPublishedAtAsync(CancellationToken cancellationToken = default)
+    {
+        // RF-15: only published posts that actually carry a video count for the
+        // "one video every N days" cadence; null means no video was ever published.
+        return await _context.Posts
+            .AsNoTracking()
+            .Where(p => p.VideoObjectKey != null
+                && p.Status == PostStatus.Published
+                && p.PublishedAt != null)
+            .OrderByDescending(p => p.PublishedAt)
+            .Select(p => p.PublishedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<Post>> SearchBySummarySimilarityAsync(
         string summary,
         double threshold = 0.80,

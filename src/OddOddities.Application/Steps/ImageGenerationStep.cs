@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using OddOddities.Application.Pipeline;
 using OddOddities.Application.Services;
 using OddOddities.Domain.Constants;
@@ -7,7 +6,6 @@ using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Exceptions;
 using OddOddities.Domain.Interfaces;
-using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.Application.Steps;
 
@@ -17,9 +15,10 @@ namespace OddOddities.Application.Steps;
 /// the image, processes with ImageSharp (resize, watermark, JPEG), uploads to MinIO,
 /// and updates the Post with image metadata. Each API/model failure advances to the
 /// next candidate model (up to ModelSelection.MaxImageModelAttempts distinct models).
-/// Cost is estimated pre-call against ModelSelection.MaxCostPerRunUsd and actual usage
-/// is accumulated on the pipeline context. Every generation attempt is persisted to
-/// GenerationAttempt.
+/// Cost is estimated pre-call against PipelineContext.CostCeilingUsd (resolved once per
+/// run by the orchestrator: ModelSelection.MaxCostPerRunUsd for image runs,
+/// MaxCostPerVideoRunUsd for video runs) and actual usage is accumulated on the
+/// pipeline context. Every generation attempt is persisted to GenerationAttempt.
 /// Business rules: BR-008 (1080x1080 JPEG ~85 with watermark), BR-009 (MinIO quota).
 /// </summary>
 public sealed class ImageGenerationStep : IPipelineStep
@@ -30,7 +29,6 @@ public sealed class ImageGenerationStep : IPipelineStep
     private readonly IPostRepository _postRepository;
     private readonly IGenerationAttemptRepository _generationAttemptRepository;
     private readonly IModelSelectionService _modelSelection;
-    private readonly IOptions<AppConfiguration> _config;
     private readonly ILogger<ImageGenerationStep> _logger;
 
     public string StepName => "ImageGeneration";
@@ -42,7 +40,6 @@ public sealed class ImageGenerationStep : IPipelineStep
         IPostRepository postRepository,
         IGenerationAttemptRepository generationAttemptRepository,
         IModelSelectionService modelSelection,
-        IOptions<AppConfiguration> config,
         ILogger<ImageGenerationStep> logger)
     {
         _imageGenerationPort = imageGenerationPort ?? throw new ArgumentNullException(nameof(imageGenerationPort));
@@ -51,7 +48,6 @@ public sealed class ImageGenerationStep : IPipelineStep
         _postRepository = postRepository ?? throw new ArgumentNullException(nameof(postRepository));
         _generationAttemptRepository = generationAttemptRepository ?? throw new ArgumentNullException(nameof(generationAttemptRepository));
         _modelSelection = modelSelection ?? throw new ArgumentNullException(nameof(modelSelection));
-        _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -62,8 +58,6 @@ public sealed class ImageGenerationStep : IPipelineStep
     {
         var text = context.Text
             ?? throw new InvalidOperationException("ImageGenerationStep requires a Text context.");
-
-        var settings = _config.Value.ModelSelection;
 
         _logger.LogInformation(
             "Starting image generation for PostId={PostId}, theme={Theme}",
@@ -90,17 +84,17 @@ public sealed class ImageGenerationStep : IPipelineStep
             if (!ModelCostEstimator.FitsBudget(
                     context.AccumulatedCostUsd,
                     estimatedCost,
-                    settings.MaxCostPerRunUsd))
+                    context.CostCeilingUsd))
             {
                 _logger.LogError(
                     "Image generation budget exceeded: accumulated={Accumulated} + estimated={Estimated} > max={Max}",
                     context.AccumulatedCostUsd,
                     estimatedCost,
-                    settings.MaxCostPerRunUsd);
+                    context.CostCeilingUsd);
 
                 return StepResult.Failure(
                     FailureStep.ImageGeneration,
-                    $"Image generation budget exceeded: {context.AccumulatedCostUsd} + {estimatedCost} > {settings.MaxCostPerRunUsd} USD",
+                    $"Image generation budget exceeded: {context.AccumulatedCostUsd} + {estimatedCost} > {context.CostCeilingUsd} USD",
                     "BUDGET_EXCEEDED");
             }
 

@@ -21,6 +21,7 @@ public sealed class AppConfiguration
     public TokenEncryptionConfiguration TokenEncryption { get; set; } = new();
     public ScheduleConfiguration Schedule { get; set; } = new();
     public ImageProcessingConfiguration ImageProcessing { get; set; } = new();
+    public VideoConfiguration Video { get; set; } = new();
 }
 
 /// <summary>
@@ -59,11 +60,20 @@ public sealed class ModelSelectionConfiguration
     /// <summary>Max total cost (USD) for a single pipeline execution (text + image).</summary>
     public decimal MaxCostPerRunUsd { get; set; } = 0.05m;
 
+    /// <summary>Max total cost (USD) for a single video pipeline execution (text + video).</summary>
+    public decimal MaxCostPerVideoRunUsd { get; set; } = 0.20m;
+
     /// <summary>Max estimated cost (USD) per text request for a candidate to enter the chain.</summary>
     public decimal MaxTextCostPerRequestUsd { get; set; } = 0.01m;
 
     /// <summary>Max estimated cost (USD) per image request for a candidate to enter the chain.</summary>
     public decimal MaxImageCostPerRequestUsd { get; set; } = 0.05m;
+
+    /// <summary>Max estimated cost (USD) per video request (cost/second × duration) for a candidate to enter the chain.</summary>
+    public decimal MaxVideoCostPerRequestUsd { get; set; } = 0.15m;
+
+    /// <summary>Max distinct video models tried per pipeline run (fallback cap).</summary>
+    public int MaxVideoModelAttempts { get; set; } = 3;
 
     /// <summary>Minimum context length for a text model to be considered a candidate.</summary>
     public int MinContextLength { get; set; } = 8000;
@@ -126,4 +136,31 @@ public sealed class ImageProcessingConfiguration
     public int Quality { get; set; } = 85;
     public string WatermarkText { get; set; } = "Odd Oddities";
     public int WatermarkFontSize { get; set; } = 24;
+}
+
+/// <summary>
+/// Video generation configuration (RF-15). IntervalDays drives the "one video every
+/// N days" cadence decided by ISchedulerPort.IsVideoRunToday(); the remaining values
+/// describe the target video shape. All values have code defaults, so the section is
+/// optional in appsettings.
+/// </summary>
+public sealed class VideoConfiguration
+{
+    /// <summary>Preferred video model id (first in the fallback chain).</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>Video duration in seconds. Default: 5 (Meta Reels accepts 3-8s).</summary>
+    public int DurationSeconds { get; set; } = 5;
+
+    /// <summary>Video resolution, e.g. "480p".</summary>
+    public string Resolution { get; set; } = "480p";
+
+    /// <summary>Aspect ratio, e.g. "9:16" for vertical Reels.</summary>
+    public string AspectRatio { get; set; } = "9:16";
+
+    /// <summary>Whether the video model should also generate audio.</summary>
+    public bool GenerateAudio { get; set; } = true;
+
+    /// <summary>Minimum days between two published videos. Default: 15.</summary>
+    public int IntervalDays { get; set; } = 15;
 }

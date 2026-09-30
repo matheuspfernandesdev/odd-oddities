@@ -21,8 +21,10 @@ namespace OddOddities.Application.Steps;
 /// content rejections retry on the same model up to PipelineConstants.MaxGenerationAttempts.
 /// Transient API errors (408/429/5xx/timeouts) retry on the same model with
 /// exponential backoff (ADR-007) before advancing the fallback chain.
-/// Cost is estimated pre-call against ModelSelection.MaxCostPerRunUsd and actual usage
-/// is accumulated on the pipeline context. Every attempt is persisted to GenerationAttempt.
+/// Cost is estimated pre-call against PipelineContext.CostCeilingUsd (resolved once per
+/// run by the orchestrator: ModelSelection.MaxCostPerRunUsd for image runs,
+/// MaxCostPerVideoRunUsd for video runs) and actual usage is accumulated on the
+/// pipeline context. Every attempt is persisted to GenerationAttempt.
 /// Business rules: BR-001 (factual content), BR-002 (max 800 chars),
 /// BR-004 (ContentHash duplicate), BR-005 (similarity threshold).
 /// </summary>
@@ -61,8 +63,6 @@ public sealed class TextGenerationStep : IPipelineStep
         PipelineContext context,
         CancellationToken cancellationToken = default)
     {
-        var settings = _config.Value.ModelSelection;
-
         _logger.LogInformation(
             "Starting text generation for {Category}/{Subcategory}",
             context.Selection.CategoryName,
@@ -94,17 +94,17 @@ public sealed class TextGenerationStep : IPipelineStep
                 if (!ModelCostEstimator.FitsBudget(
                         context.AccumulatedCostUsd,
                         estimatedCost,
-                        settings.MaxCostPerRunUsd))
+                        context.CostCeilingUsd))
                 {
                     _logger.LogError(
                         "Text generation budget exceeded: accumulated={Accumulated} + estimated={Estimated} > max={Max}",
                         context.AccumulatedCostUsd,
                         estimatedCost,
-                        settings.MaxCostPerRunUsd);
+                        context.CostCeilingUsd);
 
                     return StepResult.Failure(
                         FailureStep.TextGeneration,
-                        $"Text generation budget exceeded: {context.AccumulatedCostUsd} + {estimatedCost} > {settings.MaxCostPerRunUsd} USD",
+                        $"Text generation budget exceeded: {context.AccumulatedCostUsd} + {estimatedCost} > {context.CostCeilingUsd} USD",
                         "BUDGET_EXCEEDED");
                 }
 

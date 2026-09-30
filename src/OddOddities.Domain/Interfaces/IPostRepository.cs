@@ -25,6 +25,12 @@ public interface IPostRepository
     Task<(Category Category, Subcategory Subcategory)> GetLeastUsedCategoryAsync(
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets the PublishedAt timestamp of the most recent published Post that carries a
+    /// video (VideoObjectKey != null), or null when no video was ever published (RF-15).
+    /// </summary>
+    Task<DateTime?> GetLatestVideoPublishedAtAsync(CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<Post>> SearchBySummarySimilarityAsync(
         string summary,
         double threshold = 0.80,

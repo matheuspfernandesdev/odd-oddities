@@ -121,11 +121,13 @@ public class TextGenerationStepTests
     [Fact]
     public async Task Execute_BudgetExceeded_FailsWithoutCallingPort()
     {
-        _config.ModelSelection.MaxCostPerRunUsd = 0.001m;
         var step = CreateStep();
         SetupChain(Model("paid/model", isFree: false, prompt: 0.00001m, completion: 0.00001m));
 
-        var result = await step.ExecuteAsync(NewContext());
+        var context = NewContext();
+        context.CostCeilingUsd = 0.001m;
+
+        var result = await step.ExecuteAsync(context);
 
         result.IsSuccess.Should().BeFalse();
         result.ErrorCode.Should().Be("BUDGET_EXCEEDED");

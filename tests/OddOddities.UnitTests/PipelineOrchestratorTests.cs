@@ -1,25 +1,33 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using OddOddities.Application.Pipeline;
 using OddOddities.Application.Ports;
 using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.UnitTests;
 
 /// <summary>
 /// Covers RF-13: skipped steps must not fail the pipeline, must be logged with
 /// outcome "Skipped" (distinct from "Success") and must never mark the Post as Failed.
+/// Covers RF-15: the execution modality is decided exactly once and its cost ceiling
+/// is written to PipelineContext before any step runs.
 /// </summary>
 public class PipelineOrchestratorTests
 {
     private readonly ICategorySelectionPort _categorySelection = Substitute.For<ICategorySelectionPort>();
     private readonly IPostRepository _postRepository = Substitute.For<IPostRepository>();
+    private readonly ISchedulerPort _scheduler = Substitute.For<ISchedulerPort>();
     private readonly ILogCorrelationPort _logCorrelation = Substitute.For<ILogCorrelationPort>();
 
     private PipelineOrchestrator CreateOrchestrator(params IPipelineStep[] steps)
+        => CreateOrchestrator(new AppConfiguration(), steps);
+
+    private PipelineOrchestrator CreateOrchestrator(AppConfiguration config, params IPipelineStep[] steps)
     {
         _categorySelection.SelectBalancedCategoryAsync(Arg.Any<CancellationToken>())
             .Returns((
@@ -30,7 +38,9 @@ public class PipelineOrchestratorTests
             steps,
             _categorySelection,
             _postRepository,
+            _scheduler,
             _logCorrelation,
+            Options.Create(config),
             NullLogger<PipelineOrchestrator>.Instance);
     }
 
@@ -100,6 +110,55 @@ public class PipelineOrchestratorTests
         await _postRepository.Received(1)
             .UpdateAsync(Arg.Is<Post>(p => p.Status == PostStatus.Failed), Arg.Any<CancellationToken>());
         after.Executions.Should().Be(0, "a failed step must stop the pipeline");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnVideoRun_DecidesModalityOnceAndAppliesVideoCostCeiling()
+    {
+        var config = new AppConfiguration();
+        _scheduler.IsVideoRunToday().Returns(true);
+
+        PipelineContext? captured = null;
+        var step = new RecordingStep("TextGeneration", context =>
+        {
+            captured = context;
+            return StepResult.Success();
+        });
+        var sut = CreateOrchestrator(config, step);
+
+        await sut.ExecuteAsync();
+
+        _scheduler.Received(1).IsVideoRunToday();
+        captured.Should().NotBeNull();
+        captured!.IsVideoRun.Should().BeTrue();
+        captured.CostCeilingUsd.Should().Be(0.20m);
+        captured.CostCeilingUsd.Should().Be(config.ModelSelection.MaxCostPerVideoRunUsd);
+        captured.Video.Should().BeNull("the video sub-context is only filled by the video step (RF-17)");
+        captured.Suggestion.Should().BeNull("the suggestion sub-context is only filled by the comment step (RF-20)");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnImageRun_DecidesModalityOnceAndAppliesImageCostCeiling()
+    {
+        var config = new AppConfiguration();
+        config.ModelSelection.MaxCostPerRunUsd = 0.06m;
+        _scheduler.IsVideoRunToday().Returns(false);
+
+        PipelineContext? captured = null;
+        var step = new RecordingStep("ImageGeneration", context =>
+        {
+            captured = context;
+            return StepResult.Success();
+        });
+        var sut = CreateOrchestrator(config, step);
+
+        await sut.ExecuteAsync();
+
+        _scheduler.Received(1).IsVideoRunToday();
+        captured.Should().NotBeNull();
+        captured!.IsVideoRun.Should().BeFalse();
+        captured.CostCeilingUsd.Should().Be(0.06m);
+        captured.CostCeilingUsd.Should().Be(config.ModelSelection.MaxCostPerRunUsd);
     }
 
     /// <summary>

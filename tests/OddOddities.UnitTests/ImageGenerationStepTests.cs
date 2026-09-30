@@ -1,6 +1,5 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using NSubstitute;
 using OddOddities.Application.Pipeline;
 using OddOddities.Application.Services;
@@ -9,7 +8,6 @@ using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Exceptions;
 using OddOddities.Domain.Interfaces;
-using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.UnitTests;
 
@@ -21,7 +19,6 @@ public class ImageGenerationStepTests
     private readonly IPostRepository _postRepository = Substitute.For<IPostRepository>();
     private readonly IGenerationAttemptRepository _attemptRepository = Substitute.For<IGenerationAttemptRepository>();
     private readonly IModelSelectionService _modelSelection = Substitute.For<IModelSelectionService>();
-    private readonly AppConfiguration _config = new();
 
     private ImageGenerationStep CreateStep()
     {
@@ -49,7 +46,6 @@ public class ImageGenerationStepTests
             _postRepository,
             _attemptRepository,
             _modelSelection,
-            Options.Create(_config),
             NullLogger<ImageGenerationStep>.Instance);
     }
 
@@ -116,11 +112,11 @@ public class ImageGenerationStepTests
     [Fact]
     public async Task Execute_BudgetExceeded_FailsWithoutCallingPort()
     {
-        _config.ModelSelection.MaxCostPerRunUsd = 0.01m;
         var step = CreateStep();
         SetupChain(Model("expensive/img", isFree: false, imageOutput: 0.5m));
 
         var context = NewContext();
+        context.CostCeilingUsd = 0.01m;
         context.AccumulatedCostUsd = 0.01m;
 
         var result = await step.ExecuteAsync(context);

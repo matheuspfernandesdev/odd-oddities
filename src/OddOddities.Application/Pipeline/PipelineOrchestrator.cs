@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OddOddities.Application.Ports;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.Application.Pipeline;
 
@@ -11,26 +13,34 @@ namespace OddOddities.Application.Pipeline;
 /// via structured logging. On failure, marks the Post as Failed with the appropriate FailureStep.
 /// Steps returning <see cref="StepOutcome.Skipped"/> are logged as "Skipped" and the pipeline
 /// continues to the next step without touching the Post (RF-13).
+/// The execution modality (image vs video) is decided once per run and exposed to the
+/// steps through PipelineContext.IsVideoRun / PipelineContext.CostCeilingUsd (RF-15).
 /// </summary>
 public sealed class PipelineOrchestrator
 {
     private readonly IEnumerable<IPipelineStep> _steps;
     private readonly ICategorySelectionPort _categorySelectionPort;
     private readonly IPostRepository _postRepository;
+    private readonly ISchedulerPort _scheduler;
     private readonly ILogCorrelationPort _logCorrelation;
+    private readonly IOptions<AppConfiguration> _config;
     private readonly ILogger<PipelineOrchestrator> _logger;
 
     public PipelineOrchestrator(
         IEnumerable<IPipelineStep> steps,
         ICategorySelectionPort categorySelectionPort,
         IPostRepository postRepository,
+        ISchedulerPort scheduler,
         ILogCorrelationPort logCorrelation,
+        IOptions<AppConfiguration> config,
         ILogger<PipelineOrchestrator> logger)
     {
         _steps = steps ?? throw new ArgumentNullException(nameof(steps));
         _categorySelectionPort = categorySelectionPort ?? throw new ArgumentNullException(nameof(categorySelectionPort));
         _postRepository = postRepository ?? throw new ArgumentNullException(nameof(postRepository));
+        _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
         _logCorrelation = logCorrelation ?? throw new ArgumentNullException(nameof(logCorrelation));
+        _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -51,6 +61,8 @@ public sealed class PipelineOrchestrator
             executionId,
             selectedCategory,
             selectedSubcategory);
+
+        ApplyModality(context);
 
         _logger.LogInformation(
             "Pipeline selected category {Category}/{Subcategory}",
@@ -151,6 +163,27 @@ public sealed class PipelineOrchestrator
         }
 
         _logger.LogInformation("Pipeline completed successfully for execution {ExecutionId}", executionId);
+    }
+
+    /// <summary>
+    /// Decides the execution modality exactly once per run (RF-15) and writes both the
+    /// decision and its effective cost ceiling to the context, so no step has to decide.
+    /// </summary>
+    private void ApplyModality(PipelineContext context)
+    {
+        context.IsVideoRun = _scheduler.IsVideoRunToday();
+
+        var modelSelection = _config.Value.ModelSelection;
+
+        context.CostCeilingUsd = context.IsVideoRun
+            ? modelSelection.MaxCostPerVideoRunUsd
+            : modelSelection.MaxCostPerRunUsd;
+
+        _logger.LogInformation(
+            "Execution modality decided: IsVideoRun={IsVideoRun}, CostCeilingUsd={CostCeilingUsd} for execution {ExecutionId}",
+            context.IsVideoRun,
+            context.CostCeilingUsd,
+            context.ExecutionId);
     }
 
     private async Task MarkPostAsFailedAsync(
