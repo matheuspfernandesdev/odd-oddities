@@ -288,6 +288,84 @@ Possiveis valores de `status_code`:
 
 ---
 
+## 13b. Publicar Reels (video) — MVP 2
+
+Reels usam **os mesmos endpoints** de publicacao de imagem (`graph.instagram.com/v26.0`), com duas diferencas: `media_type=REELS` e `video_url` em vez de `image_url`, e **polling maior** (video demora minutos, nao segundos). **Nenhuma permissao nova** e necessaria (`instagram_business_content_publish` ja cobre Reels).
+
+### Passo 1: Criar o container do Reels
+
+```text
+POST https://graph.instagram.com/v26.0/<INSTAGRAM_USER_ID>/media
+  ?media_type=REELS
+  &video_url=<URL_PUBLICA_HTTPS>
+  &caption=<CAPTION>
+  &access_token=<TOKEN_LONGO>
+```
+
+A `video_url` deve ser uma URL publica HTTPS (a Meta faz cURL dela) — o Worker usa a mesma URL pre-assinada do MinIO (24 h) ja usada para imagens. Arquivos pequenos (~3–5 MB) sao aceitos diretamente; `upload_type=resumable` so e necessario para arquivos grandes.
+
+### Passo 2: Acompanhar o processamento (polling maior)
+
+```text
+GET https://graph.instagram.com/v26.0/<CREATION_ID>?fields=status_code&access_token=<TOKEN_LONGO>
+```
+
+Video processa mais devagar: o Worker faz polling com `ReelsContainerPollingIntervalSeconds` (30 s) ate `MaxReelsContainerPollingAttempts` (10 → cobre ~5 min), esperando `IN_PROGRESS` → `FINISHED`. So depois de `FINISHED` publica.
+
+### Passo 3: Publicar
+
+```text
+POST https://graph.instagram.com/v26.0/<INSTAGRAM_USER_ID>/media_publish
+  ?creation_id=<CREATION_ID>
+  &access_token=<TOKEN_LONGO>
+```
+
+**Especificacoes de Reels (verificadas 2026-09):** MP4/MOV (moov atom no inicio), codec H.264/HEVC, audio AAC ≤ 48 kHz, 23–60 FPS, aspect ratio 0.01:1–10:1 (9:16 recomendado), duracao **3 s a 15 min**, ≤ 300 MB, largura ≤ 1920 px. O video do Worker (Seedance 480p 9:16, 5–8 s, H.264/AAC) atende com folga.
+
+---
+
+## 13c. Ler e responder comentarios — MVP 2 (requer permissao extra)
+
+O MVP 2 le comentarios dos ultimos posts para transformar sugestoes de tema em post, com credito ao autor, e responde agradecendo. Usa `graph.instagram.com` (mesmo dominio), mas **exige a permissao `instagram_business_manage_comments`**, que o token padrao (`basic` + `content_publish`) **nao carrega**.
+
+### Ler comentarios
+
+```text
+GET https://graph.instagram.com/v26.0/<IG_MEDIA_ID>/comments
+  ?fields=id,text,timestamp,from.username
+  &limit=50
+  &access_token=<TOKEN_LONGO>
+```
+
+Retorna ate 50 comentarios top-level por pagina (pagina por `after`), em ordem cronologica reversa (mais recentes primeiro). Nao ha filtro por timestamp server-side; o Worker filtra client-side e por idempotencia (`CommentId` unico).
+
+### Responder um comentario
+
+```text
+POST https://graph.instagram.com/v26.0/<COMMENT_ID>/replies
+  ?message=Thanks for the suggestion!
+  &access_token=<TOKEN_LONGO>
+```
+
+### Permissao e fallback
+
+- **Permissao necessaria:** `instagram_business_manage_comments` (alem de `instagram_business_basic`).
+- **Sem a permissao:** a Meta retorna `OAuthException` codes **10/190/3** ("Application does not have permission"). O Worker trata isso como **fallback**: loga `WARNING: comment permission missing — skipping comment suggestion step`, pula o step e o pipeline segue normal (gera post por curiosidade). Nenhuma execucao falha por isso. Feature flag `AppConfiguration:Comments:Enabled` default **false**.
+- **Conferir a permissao no token:** apos regenerar, confirme no campo `permissions` da resposta de `refresh_access_token` (Step 10) que `instagram_business_manage_comments` esta presente.
+
+### Runbook — ativar comentarios
+
+1. Painel Meta → app → **Casos de uso** → "Gerenciar mensagens e conteudo no Instagram" → **Personalizar**.
+2. Adicionar `instagram_business_manage_comments` (ou gerar o token de novo pelo "Generate access token" — o painel novo concede basic + content_publish + manage_comments).
+3. `GET .../refresh_access_token?grant_type=ig_refresh_token&access_token=<novo>` → conferir `instagram_business_manage_comments` no campo `permissions`.
+4. Atualizar `META_ACCESS_TOKEN` no `.env` da VPS + redeploy.
+5. Setar `AppConfiguration__Comments__Enabled=true` (env var) + redeploy.
+6. Validar: log esperado `CommentSuggestionStep: fetched N comments across M medias`.
+
+> A resposta de exemplo de `refresh_access_token` no Step 10 ja lista `instagram_business_manage_comments` como referencia do formato — mas o token gerado com basic + content_publish nao o inclui ate ser regenerado com o escopo acima.
+
+---
+
 ## 14. Versionamento da API
 
 A Meta usa versionamento semantico para a Graph API. A versao atual (setembro/2026) e a **v26.0**.

@@ -196,6 +196,74 @@ A imagem vem em Base64. Decodifique, processe com ImageSharp, faca upload no Min
 
 ---
 
+## 9b. Geracao de video (MVP 2 — API assincrona)
+
+A OpenRouter oferece geracao de video por uma **API assincrona** (diferente de texto e imagem, que sao sincronos). O Worker usa isso para gerar Reels curtos (≤ 8 s, 9:16, 480p) publicados 1 vez a cada 15 dias.
+
+### Fluxo em 4 passos
+
+```text
+1. POST /api/v1/videos            → 202 { id, polling_url, status: "pending" }
+2. GET  /api/v1/videos/{jobId}    → { status: "pending" | "in_progress" | "completed" | "failed" }
+3. GET  /api/v1/videos/{jobId}/content?index=0   (com Authorization: Bearer) → MP4
+4. usage.cost vem no poll response quando status = completed → vira CostUsd em GenerationAttempt
+```
+
+O Worker faz polling a cada `VideoJobPollingIntervalSeconds` (30 s) ate `completed`/`failed`, no maximo `MaxVideoJobPollingAttempts` (30 → cobre ~15 min). O download em (3) exige `Authorization: Bearer` — as `unsigned_urls` nao sao pre-assinadas.
+
+### Request (submit)
+
+```text
+POST https://openrouter.ai/api/v1/videos
+Authorization: Bearer <OPENROUTER_API_KEY>
+Content-Type: application/json
+
+{
+  "model": "bytedance/seedance-2.0-mini",
+  "prompt": "A poetic surreal short video about ...",
+  "duration": 5,
+  "resolution": "480p",
+  "aspect_ratio": "9:16",
+  "generate_audio": true
+}
+```
+
+Resposta `202`:
+
+```json
+{ "id": "vid_abc123", "polling_url": "https://openrouter.ai/api/v1/videos/vid_abc123", "status": "pending" }
+```
+
+Poll `completed`:
+
+```json
+{ "status": "completed", "usage": { "cost": 0.08 } }
+```
+
+### Descoberta de modelos e SKUs `per-video-second`
+
+```text
+GET https://openrouter.ai/api/v1/videos/models
+```
+
+Retorna descritores com `supported_durations`, `supported_resolutions`, `supported_aspect_ratios` e `pricing_skus`. O catalogo de video usa SKUs **por segundo de video** (`per-video-second[-<res>]`), nao por token/imagem. O custo efetivo por segundo do modelo = **menor SKU `per-video-second*` valido**; modelo sem esse SKU nao e elegivel. Custo estimado do job = `custo/segundo × DurationSeconds`.
+
+> Verificado em 2026-09: **nao existe modelo de video gratuito** no catalogo (zero SKUs a `0`). Melhor candidato: `bytedance/seedance-2.0-mini` (~USD 0,05–0,11 por video de 5 s). O `usage.cost` real do poll e a fonte da verdade e ja e acumulado no budget.
+
+### Cadeia e tetos (padrao ADR-008)
+
+`GetVideoChainAsync` segue o mesmo padrao das cadeias de texto/imagem: preferido (`AppConfiguration:Video:ModelId`) primeiro, depois free (se existir), depois mais barato por segundo. Filtros: `supported_aspect_ratios` contendo `Video.AspectRatio` (9:16) e `supported_durations` contendo `Video.DurationSeconds`. Limites:
+
+| Config | Default | Descricao |
+|---|---|---|
+| `MaxVideoModelAttempts` | 3 | Max de modelos distintos de video por execucao |
+| `MaxVideoCostPerRequestUsd` | 0.15 | Teto de custo estimado por request de video para entrar na cadeia |
+| `MaxCostPerVideoRunUsd` | 0.20 | Teto de custo total (texto+video) por execucao de video |
+
+Catalogo indisponivel → cadeia so com o modelo configurado (fallback silencioso, mesmo padrao dos catalogos de texto/imagem). Ver [ADR-009](./adr/ADR-009-pipeline-video-skip-able.md).
+
+---
+
 ## 10. Headers opcionais recomendados
 
 - `HTTP-Referer`: URL publica do seu projeto (aparece no ranking do OpenRouter).

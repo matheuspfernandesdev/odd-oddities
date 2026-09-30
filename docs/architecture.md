@@ -109,6 +109,10 @@ SystemSetting (entidade independente)
 | ErrorCode | string(80) | nao | Codigo de erro |
 | FailureDetails | text | nao | Detalhes sem segredos |
 | Caption | text | sim | Texto final publicado |
+| SourceCommentSuggestionId | long | nao | FK para CommentSuggestion (post originado de sugestao) — MVP 2 |
+| VideoObjectKey | string(255) | nao | Chave do video no MinIO — MVP 2 |
+| VideoBytes | bigint | nao | Tamanho do video em bytes — MVP 2 |
+| VideoDurationSeconds | int | nao | Duracao do video — MVP 2 |
 | CreatedAt | DateTime(UTC) | sim | |
 | UpdatedAt | DateTime(UTC) | sim | |
 | PublishedAt | DateTime(UTC) | nao | |
@@ -166,13 +170,28 @@ SystemSetting (entidade independente)
 | NewValue | text | nao | |
 | ChangedAt | DateTime(UTC) | sim | |
 
+### CommentSuggestion (MVP 2 — sugestoes via comentarios)
+
+Auditoria e idempotencia das sugestoes de tema lidas dos comentarios.
+
+| Atributo | Tipo | Obrigatorio | Descricao |
+|---|---|---|---|
+| Id | long | sim | PK |
+| CommentId | string(120) | sim | Id do comentario na Meta — **unique index** (idempotencia) |
+| MediaId | string(120) | sim | Post do Instagram onde o comentario esta |
+| AuthorUsername | string(120) | sim | Autor, usado no credito `Suggested by @user` |
+| CommentText | text | sim | Texto original do comentario |
+| Classification | enum | sim | NotSuggestion, Rejected, Accepted |
+| RejectionReason | string(255) | nao | Motivo (null quando Accepted) |
+| ProcessedAt | DateTime(UTC) | sim | Quando foi classificado |
+
 ## Enums
 
 ### PostStatus
 
 - Generated
 - Validated
-- ImageProcessed
+- ImageProcessed (reusado semanticamente como "media processed" tambem para video no MVP 2)
 - Published
 - Failed
 
@@ -184,6 +203,15 @@ SystemSetting (entidade independente)
 - ImageStorage
 - Database
 - InstagramApi
+- VideoGeneration (MVP 2)
+- VideoStorage (MVP 2)
+- CommentModeration (MVP 2)
+
+### CommentClassification (MVP 2)
+
+- NotSuggestion
+- Rejected
+- Accepted
 
 ### AttemptStatus
 
@@ -225,7 +253,7 @@ Eventos sao registrados por um publisher interno e logados no stdout. Nao ha eve
 | BR-009 | MinIO quota de 20 GB; upload bloqueado quando atingida. | Pipeline | ERROR | Cota do MinIO atingida. |
 | BR-010 | Token Meta deve ser renovado antes de 14 dias para expiracao. | Pipeline | ERROR | Falha na renovacao do token Meta. |
 | BR-011 | Toda publicacao grava uma `Publication`. | Pipeline | ERROR | Falha na publicacao. |
-| BR-012 | Toda publicacao deve publicar apenas uma imagem unica por execucao. | Pipeline | ERROR | Tipo de midia incompativel. |
+| BR-012 | Toda publicacao deve publicar apenas uma midia por execucao (imagem OU video). | Pipeline | ERROR | Tipo de midia incompativel. |
 | BR-013 | Quando publicado, status passa para Published e `PublishedAt` e preenchido. | Pipeline | ERROR | Status nao atualizou. |
 | BR-014 | Posts e imagens nunca sao excluidos. | Politica | ERROR | Exclusao nao permitida. |
 
@@ -241,51 +269,73 @@ Eventos sao registrados por um publisher interno e logados no stdout. Nao ha eve
 
 - `ITextGenerationPort` - OpenRouter (texto).
 - `IImageGenerationPort` - OpenRouter (imagem).
-- `IModelCatalogPort` - OpenRouter (catalogo de modelos / precos).
-- `IInstagramPublishingPort` - Meta Graph API.
+- `IVideoGenerationPort` - OpenRouter (video, API assincrona) — MVP 2. `GenerateVideoAsync(prompt, modelId, ct)` retorna `VideoGenerationResult { VideoBytes, ModelId, CostUsd, DurationSeconds }`.
+- `IModelCatalogPort` - OpenRouter (catalogo de modelos / precos; texto, imagem e video no MVP 2).
+- `IInstagramPublishingPort` - Meta Graph API (ganhou `CreateReelsContainerAsync` no MVP 2).
+- `IMediaCommentPort` - Meta Graph API (comentarios) — MVP 2. `GetCommentsAsync(mediaId, ct)` + `ReplyToCommentAsync(commentId, message, ct)`.
 - `IObjectStoragePort` - MinIO.
-- `IPostRepository` - PostgreSQL.
+- `IPostRepository` - PostgreSQL (ganhou `GetLatestVideoPublishedAtAsync` e `GetLatestPublishedMediaIdsAsync` no MVP 2).
+- `ICommentSuggestionRepository` - PostgreSQL — MVP 2. `ExistsByCommentIdAsync`, `CreateAsync`, `UpdateAsync`, `GetByCommentIdAsync`.
+- `ISchedulerPort` - agenda (ganhou `IsVideoRunToday()` no MVP 2).
 - `IClock` - Relogio com timezone.
 
 ## Adapters (infraestrutura)
 
 - `OpenRouterTextGenerationAdapter` usa `POST /api/v1/chat/completions` (model id recebido do caller).
 - `OpenRouterImageGenerationAdapter` usa `POST /api/v1/images` (model id recebido do caller).
-- `OpenRouterModelCatalogAdapter` usa `GET /api/v1/models` (texto e imagem) para montar a cadeia de fallback.
-- `ModelSelectionService` (Application) monta a cadeia: modelo preferido + candidatos free/mais baratos dentro dos tetos de `ModelSelection`.
-- `InstagramPublishingAdapter` usa endpoints da Meta Graph API.
-- `MinioObjectStorageAdapter` usa SDK compativel com S3.
-- `PostgresPostRepository` usa EF Core + Npgsql.
+- `OpenRouterVideoGenerationAdapter` (MVP 2) usa a API assincrona de video: `POST /api/v1/videos` → poll `GET /api/v1/videos/{jobId}` → download `GET /api/v1/videos/{jobId}/content?index=0` (com Bearer). `usage.cost` do poll vira `CostUsd`.
+- `OpenRouterModelCatalogAdapter` usa `GET /api/v1/models` (texto e imagem) e `GET /api/v1/videos/models` (video, MVP 2) para montar a cadeia de fallback.
+- `ModelSelectionService` (Application) monta a cadeia: modelo preferido + candidatos free/mais baratos dentro dos tetos de `ModelSelection`; `GetVideoChainAsync` ordena por custo por segundo (MVP 2).
+- `MetaInstagramPublishingAdapter` usa endpoints da Meta Graph API; no MVP 2 implementa tambem `CreateReelsContainerAsync` (`media_type=REELS&video_url=...`) e `IMediaCommentPort` (`GET /{media-id}/comments`, `POST /{comment-id}/replies`).
+- `MinioObjectStorageAdapter` usa SDK compativel com S3 (video enviado como `video/mp4` no MVP 2).
+- `PostgresPostRepository` usa EF Core + Npgsql; `PostgresCommentSuggestionRepository` (MVP 2) faz o CRUD de sugestoes.
 - `SystemClock` usa `TimeProvider` integrado ao .NET 8.
 
 ## Fluxo principal
+
+A partir do MVP 2 o pipeline tem **5 steps** executados em ordem declarativa pelo `PipelineOrchestrator` (foreach + `SemaphoreSlim(1,1)`). Cada execucao decide **uma vez** se e dia de video ou de imagem e publica **uma unica midia** (BR-012). Steps de midia que nao se aplicam a modalidade fazem short-circuit com `StepResult.Skipped()` (loga `outcome=Skipped`, nunca marca o Post como `Failed`).
 
 ```text
 Cron (PeriodicTimer)
   |
   v
-1. Selecionar Category e Subcategory menos usadas (90 dias)
-1b. Buscar catalogo de modelos OpenRouter (fallback silencioso p/ config se falhar)
-2. Post.Created (status=Generated)
-3. OpenRouterTextAdapter: gerar curiosidade (JSON)
-   - cadeia de modelos: preferido -> free -> mais barato (erros de modelo avancam)
-   - rejeicoes de conteudo re-tentam no mesmo modelo (max 3)
-4. Validar SourceUrl (HEAD)
-5. Validar tamanho e similaridade textual
-6. Post.Updated (status=Validated)
-7. OpenRouterImageAdapter: gerar imagem (b64) com a mesma logica de cadeia
-8. ImageSharp: redimensionar, marca d'agua, JPEG ~85
-9. MinioObjectStorageAdapter: PutObject (chave UUID)
-10. Verificar quota MinIO (20 GB)
-11. Gerar URL pre-assinada (24h)
-12. InstagramPublishingAdapter: criar container de midia
-13. InstagramPublishingAdapter: publicar midia
-14. Polling do status ate Published/Error
-15. Persistir Publication
-16. Post.Updated (status=Published, PublishedAt=now)
+0. Orchestrator resolve modalidade 1x: isVideoRun = ISchedulerPort.IsVideoRunToday()
+   → PipelineContext.IsVideoRun + CostCeilingUsd (MaxCostPerVideoRunUsd se video, senao MaxCostPerRunUsd)
+0b. Buscar catalogo de modelos OpenRouter (fallback silencioso p/ config se falhar)
+
+STEP 1 — CommentSuggestionStep  (skip se Comments.Enabled=false, dia de video, sem posts/comentarios)
+   1. Buscar ultimos 15 posts publicados com MetaMediaId
+   2. GET /{mediaId}/comments por post; filtrar CommentId ja processados (CommentSuggestions)
+   3. Classificar comentarios novos via cadeia de texto (1 chamada): e sugestao? extrai {theme, summary}
+   4. Persistir cada comentario (NotSuggestion/Rejected/Accepted); max 1 Accepted por execucao
+   5. Sugestao aceita → context.Suggestion. Erro de permissao (codes 10/190/3) → Skipped + warning (fallback R14)
+
+STEP 2 — TextGenerationStep
+   1. Se context.Suggestion != null: usa o tema/summary da sugestao (sem sortear categoria)
+      senao: usa Category/Subcategory menos usadas (90 dias)
+   2. Gerar curiosidade (cadeia de modelos: preferido → free → mais barato)
+   3. Validar SourceUrl (HEAD), tamanho, ContentHash (BR-004) e similaridade (BR-005)
+   4. Sugestao rejeitada na validacao → CommentSuggestion.Rejected, limpa context.Suggestion,
+      re-tenta pelo fluxo normal de categoria (sempre produz post; nao consome tentativas extras de BR-006)
+   5. Caption de sugestao: texto + "Suggested by @user" + "Source: <URL>"; Post.SourceCommentSuggestionId ligado
+
+STEP 3 — ImageGenerationStep   (Skipped se isVideoRun)
+   1. Gerar imagem (b64), ImageSharp (1080x1080 JPEG ~85 + marca d'agua), MinIO, quota (BR-009)
+
+STEP 4 — VideoGenerationStep   (Skipped se NAO isVideoRun)  — MVP 2
+   1. Cadeia de video (GetVideoChainAsync), budget custo/s × DurationSeconds contra CostCeilingUsd
+   2. POST /videos → poll → download MP4 → MinIO (video/mp4)
+   3. Post.VideoObjectKey/VideoBytes/VideoDurationSeconds; Status = ImageProcessed (reuso semantico)
+
+STEP 5 — PublicationStep
+   1. Gerar URL pre-assinada (24h)
+   2. Imagem: CreateMediaContainerAsync (image_url); Video: CreateReelsContainerAsync (media_type=REELS&video_url), polling maior
+   3. Publicar (media_publish) + polling ate Published/Error; persistir Publication
+   4. Post.Status = Published, PublishedAt = now
+   5. Se veio de sugestao e Comments.Enabled: ReplyToCommentAsync("Thanks for the suggestion!") fire-and-forget (timeout 10s)
 ```
 
-Budget por execucao: custos de texto+imagem acumulam em `PipelineContext.AccumulatedCostUsd` e sao limitados por `ModelSelection:MaxCostPerRunUsd`. Cada tentativa grava em `GenerationAttempt`.
+Budget por modalidade: custos acumulam em `PipelineContext.AccumulatedCostUsd` e sao limitados por `PipelineContext.CostCeilingUsd`, resolvido 1x no orchestrator — `ModelSelection:MaxCostPerRunUsd` (0.06, texto+imagem) ou `ModelSelection:MaxCostPerVideoRunUsd` (0.20, texto+video). Cada tentativa grava em `GenerationAttempt`. Ver [ADR-009](./adr/ADR-009-pipeline-video-skip-able.md) e [ADR-010](./adr/ADR-010-sugestoes-comentarios-fallback-permissao.md).
 
 Em qualquer falha, o `Post` e marcado como `Failed` com `FailureStep`, `FailureReason`, `ErrorCode` e `FailureDetails` (sem segredos).
 
@@ -299,6 +349,8 @@ Em qualquer falha, o `Post` e marcado como `Failed` com `FailureStep`, `FailureR
 - [ADR-006 Token Meta Renovado Criptografado no PostgreSQL](./adr/ADR-006-token-criptografado.md)
 - [ADR-007 Retry com Backoff Exponencial](./adr/ADR-007-retry-backoff.md) (nao implementado)
 - [ADR-008 Selecao Dinamica de Modelos com Fallback e Budget](./adr/ADR-008-modelo-dinamico-fallback-custo.md)
+- [ADR-009 Pipeline Alternativo de Video com Steps Skip-able](./adr/ADR-009-pipeline-video-skip-able.md)
+- [ADR-010 Sugestoes de Tema via Comentarios com Fallback de Permissao](./adr/ADR-010-sugestoes-comentarios-fallback-permissao.md)
 
 # Stack Tecnologica
 
@@ -380,7 +432,7 @@ A primeira versao nao usa webhooks, SFTP, EDI ou pagamentos.
 
 ## Modelagem
 
-- Tabelas principais: `Categories`, `Subcategories`, `Posts`, `GenerationAttempts`, `Publications`, `SystemSettings`, `PostAudits`.
+- Tabelas principais: `Categories`, `Subcategories`, `Posts`, `GenerationAttempts`, `Publications`, `SystemSettings`, `PostAudits`, `CommentSuggestions` (MVP 2).
 
 ## Indices
 

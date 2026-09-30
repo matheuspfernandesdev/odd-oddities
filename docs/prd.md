@@ -363,6 +363,193 @@ Pessoas que gostam de curiosidades, fatos incomuns e conteudo visual artistico n
 
 ---
 
+# Requisitos Funcionais — MVP 2
+
+> RFs do MVP 2 (video Reels + sugestoes de tema via comentarios). Design detalhado em [`mvp2-planning.md`](./mvp2-planning.md); decisoes em [ADR-009](./adr/ADR-009-pipeline-video-skip-able.md) e [ADR-010](./adr/ADR-010-sugestoes-comentarios-fallback-permissao.md). Todos implementados.
+
+## [x] RF-13: Outcome Skipped no pipeline
+
+**User Story:** Como dono, quero que steps que nao se aplicam a execucao sejam pulados sem falhar o pipeline.
+
+**Criterios de aceitacao:**
+
+1. `StepResult` ganha outcome `Skipped` (`StepResult.Skipped()`), com `IsSuccess = true` e `FailureStep = null`.
+2. `PipelineOrchestrator` loga `outcome = Skipped` (distinto de `Success`) e continua para o proximo step.
+3. Outcome `Skipped` NUNCA marca o Post como `Failed`.
+4. Steps existentes nao mudam de comportamento.
+
+**Dependencias:** nenhuma.
+
+---
+
+## [x] RF-14: Colunas e constantes de video no Post
+
+**User Story:** Como dono, quero persistir os metadados do video gerado no Post, para auditoria e para a regra de intervalo do RF-15.
+
+**Criterios de aceitacao:**
+
+1. Migration adiciona colunas nullable em `Posts`: `VideoObjectKey VARCHAR(255)`, `VideoBytes BIGINT`, `VideoDurationSeconds INT`.
+2. Entity `Post` e `PostConfiguration` atualizados.
+3. `PipelineConstants` ganha `DefaultVideoDurationSeconds = 5`, `MaxVideoDurationSeconds = 8`, `MinVideoDurationSeconds = 3`, `MaxVideoJobPollingAttempts = 30`, `VideoJobPollingIntervalSeconds = 30`, `MaxReelsContainerPollingAttempts = 10`, `ReelsContainerPollingIntervalSeconds = 30`.
+4. `FailureStep` ganha `VideoGeneration`, `VideoStorage`, `CommentModeration` (append-only).
+5. `FailureStepMap` mapeia `VideoGenerationStep`/`VideoStorage`.
+6. Migration auto-aplicada no startup.
+
+**Dependencias:** nenhuma.
+
+---
+
+## [x] RF-15: Decisao de modalidade por execucao (imagem vs video)
+
+**User Story:** Como dono, quero que cada execucao decida uma unica vez se gera video ou imagem, para a cadencia "1 video a cada 15 dias" ser automatica.
+
+**Criterios de aceitacao:**
+
+1. `ISchedulerPort` ganha `bool IsVideoRunToday()`.
+2. Regra: ultimo Post com `VideoObjectKey != null`; se `hoje - lastVideoPublishedAt >= Video.IntervalDays` OU nunca houve video → true; query falha → false.
+3. `PipelineOrchestrator` chama 1x e grava `PipelineContext.IsVideoRun` e `CostCeilingUsd` (`MaxCostPerVideoRunUsd` se video, senao `MaxCostPerRunUsd`).
+4. `PipelineContext` ganha `IsVideoRun`, `CostCeilingUsd`, `VideoContext? Video`, `SuggestionContext? Suggestion`.
+5. `AppConfiguration` ganha `VideoConfiguration` (`ModelId`, `DurationSeconds=5`, `Resolution="480p"`, `AspectRatio="9:16"`, `GenerateAudio=true`, `IntervalDays=15`) e `ModelSelection.MaxVideoModelAttempts=3`, `MaxVideoCostPerRequestUsd=0.15`, `MaxCostPerVideoRunUsd=0.20`.
+6. `TextGenerationStep`/`ImageGenerationStep` usam `context.CostCeilingUsd` (0.06 hoje).
+
+**Dependencias:** RF-13, RF-14.
+
+---
+
+## [x] RF-16: Cadeia de modelos de video (catalogo dinamico)
+
+**User Story:** Como dono, quero a cadeia de modelos de video seguindo o padrao ADR-008, para pagar o minimo por segundo dentro dos tetos.
+
+**Criterios de aceitacao:**
+
+1. `IModelCatalogPort.GetVideoModelsAsync(ct)` retorna descritores (id, menor SKU `per-video-second*` como custo/segundo, `supported_durations`, `supported_aspect_ratios`).
+2. Infra busca `GET {BaseUrl}/videos/models`; modelo sem SKU `per-video-second*` nao e elegivel.
+3. `GetVideoChainAsync(ct)`: preferido primeiro, depois free, depois mais barato/segundo; filtro por aspect ratio (9:16) e duracao; max `MaxVideoModelAttempts`; `custo/s × DurationSeconds <= MaxVideoCostPerRequestUsd`.
+4. Cache por execucao + fallback para o modelo configurado quando o catalogo falha.
+
+**Dependencias:** RF-15.
+
+---
+
+## [x] RF-17: Geracao de video via OpenRouter (assincrono)
+
+**User Story:** Como dono, quero gerar MP4s verticais curtos via API assincrona da OpenRouter, para publicar Reels sem intervencao.
+
+**Criterios de aceitacao:**
+
+1. Port `IVideoGenerationPort.GenerateVideoAsync(prompt, modelId, ct)`; record `VideoGenerationResult { VideoBytes, ModelId, CostUsd, DurationSeconds }`.
+2. Adapter `OpenRouterVideoGenerationAdapter`: `POST /videos` → poll `GET /videos/{jobId}` → download `GET /videos/{jobId}/content?index=0` (Bearer). `usage.cost` → `CostUsd`.
+3. Falhas viram `OpenRouterModelException`; timeout global respeita polling; cancelamento propaga.
+4. `VideoGenerationStep`: cadeia via `GetVideoChainAsync`, budget `custo/s × DurationSeconds` contra `context.CostCeilingUsd`, `GenerationAttempt` por tentativa, MinIO `video/mp4` com quota BR-009, Post atualizado (`VideoObjectKey`/`VideoBytes`/`VideoDurationSeconds`, `Status = ImageProcessed`), `context.Video` preenchido.
+5. `!context.IsVideoRun` → `StepResult.Skipped()`.
+6. DI: port/adapter/step registrados; step apos `ImageGenerationStep`.
+
+**Dependencias:** RF-13, RF-14, RF-15, RF-16.
+
+---
+
+## [x] RF-18: Publicacao de Reels e configuracao/deploy
+
+**User Story:** Como dono, quero que o video seja publicado como Reels pela mesma Meta Graph API e que a nova config chegue por env vars no padrao do projeto.
+
+**Criterios de aceitacao:**
+
+1. `IInstagramPublishingPort.CreateReelsContainerAsync(videoUrl, caption, ct)` (`media_type=REELS&video_url=...`).
+2. `PublicationStep`: se `context.IsVideoRun`, presigned URL do `context.Video.ObjectKey` + `CreateReelsContainerAsync`; polling do container com `MaxReelsContainerPollingAttempts`/intervalo de video; senao fluxo de imagem.
+3. Timeout do step de video usa o polling proprio (nao os 240 s de imagem).
+4. Run de video sem `context.Video` → `StepResult.Failure(VideoGeneration, ...)` (defensivo).
+5. `appsettings.json`/`appsettings.Development.json` com secao `AppConfiguration:Video` + `ModelSelection` atualizado.
+6. `docker-compose.yml`/`.env.example`: `AppConfiguration__Video__*` e `AppConfiguration__ModelSelection__MaxCostPerVideoRunUsd`.
+
+**Dependencias:** RF-17.
+
+---
+
+## [x] RF-19: Cadeia de comentarios — port, entidade e persistencia
+
+**User Story:** Como dono, quero ler e registrar comentarios com idempotencia por CommentId, para nunca processar o mesmo comentario duas vezes.
+
+**Criterios de aceitacao:**
+
+1. Port `IMediaCommentPort`: `GetCommentsAsync(mediaId, ct)` e `ReplyToCommentAsync(commentId, message, ct)`; record `MediaComment(CommentId, Text, Timestamp, AuthorUsername)`.
+2. Entity `CommentSuggestion` (Id, CommentId unique, MediaId, AuthorUsername, CommentText, Classification `NotSuggestion/Rejected/Accepted`, RejectionReason(255), ProcessedAt) + `ICommentSuggestionRepository` (`ExistsByCommentIdAsync`, `CreateAsync`, `UpdateAsync`, `GetByCommentIdAsync`).
+3. `Post.SourceCommentSuggestionId (long?)` FK → CommentSuggestions.
+4. Migration `AddCommentSuggestions` (tabela + coluna no Post + indice unique em CommentId), auto-aplicada no startup.
+5. `MetaInstagramPublishingAdapter` implementa `IMediaCommentPort`: `GET /v26.0/{mediaId}/comments?limit=50&fields=id,text,timestamp,from.username` com paginacao por `after`; `POST /v26.0/{commentId}/replies`.
+6. `PostgresCommentSuggestionRepository` + `IPostRepository.GetLatestPublishedMediaIdsAsync(limit)`.
+7. `AppConfiguration.CommentsConfiguration { Enabled = false, LookbackPosts = 15 }`.
+
+**Dependencias:** nenhuma.
+
+---
+
+## [x] RF-20: CommentSuggestionStep — classificacao IA e decisao
+
+**User Story:** Como dono, quero que comentarios que sugerem temas virem input do post do dia, com classificacao por IA e no maximo 1 sugestao por execucao.
+
+**Criterios de aceitacao:**
+
+1. `CommentSuggestionStep` registrado como PRIMEIRO step do pipeline.
+2. Short-circuits `Skipped`: `Comments.Enabled=false`; run de video; sem posts com MetaMediaId; sem comentarios novos.
+3. Fluxo: ultimos N posts → `GetCommentsAsync` → filtra CommentId ja existentes → cadeia de texto free (1 chamada) classifica cada comentario, extrai `{theme, summary}`.
+4. Todo comentario novo persistido (`NotSuggestion`/`Rejected`/`Accepted`).
+5. Max 1 `Accepted` por execucao; demais sugestoes → `NotSuggestion` com `RejectionReason = "LIMIT_ONE_SUGGESTION_PER_RUN"`.
+6. Sugestao aceita → `context.Suggestion = new SuggestionContext(...)`; falha de classificacao → warning, pipeline segue.
+7. Validacao editorial (hash/similaridade) NAO acontece aqui — acontece no `TextGenerationStep` (RF-21).
+8. Erro de permissao Meta (403/codes 10/190/3) → warning `comment permission missing — skipping comment suggestion step`, `Skipped`; outros erros Meta → warning + `Skipped`.
+
+**Dependencias:** RF-13, RF-15, RF-19.
+
+---
+
+## [x] RF-21: TextGenerationStep com tema sugerido e credito ao autor
+
+**User Story:** Como dono, quero que o post do dia use o tema da sugestao quando houver, com credito `Suggested by @user` na legenda.
+
+**Criterios de aceitacao:**
+
+1. Se `context.Suggestion != null`, a geracao usa o tema/summary da sugestao (em vez de categoria/subcategoria).
+2. Validacoes existentes (length, hash, similaridade) aplicadas; se rejeitado: `GenerationAttempt` `Rejected`, `CommentSuggestion.Rejected` com o motivo, `context.Suggestion = null` e re-tenta pelo fluxo normal de categoria (BR-006; sugestao nao consome tentativas extras).
+3. Post com `SourceCommentSuggestionId = suggestion.Id` quando originado de sugestao.
+4. Caption de sugestao: `"...\n\nSuggested by @{AuthorUsername}\n\nSource: {SourceUrl}"`; caso normal inalterado.
+
+**Dependencias:** RF-15, RF-19, RF-20.
+
+---
+
+## [x] RF-22: Reply pos-publicacao e feature flag de comentarios
+
+**User Story:** Como dono, quero agradecer o autor da sugestao depois de publicar, sem que uma falha de reply afete a publicacao.
+
+**Criterios de aceitacao:**
+
+1. `PublicationStep` ganha `IMediaCommentPort` e `IOptions<AppConfiguration>`.
+2. Apos publicar com sucesso E `context.Suggestion != null` E `Comments.Enabled`: `ReplyToCommentAsync(suggestion.CommentId, "Thanks for the suggestion!")` fire-and-forget — excecao → warning, nunca falha o step nem marca Post Failed.
+3. Timeout proprio curto (10 s) para o reply.
+4. Sem permissao (403/codes 10/190/3): warning unico, sem retry.
+5. Env vars: `AppConfiguration__Comments__Enabled=${COMMENTS_ENABLED:-false}`, `AppConfiguration__Comments__LookbackPosts=${COMMENTS_LOOKBACK_POSTS:-15}`.
+
+**Dependencias:** RF-15, RF-19, RF-20, RF-21.
+
+---
+
+## [x] RF-23: Documentacao e ADRs do MVP 2
+
+**User Story:** Como dono, quero a documentacao atualizada refletindo o MVP 2 implementado, para manter o repositorio como portfolio coerente.
+
+**Criterios de aceitacao:**
+
+1. `docs/architecture.md`: fluxo dos 5 steps, portas novas, tabela `CommentSuggestions`, BR-012 atualizada, budgets por modalidade.
+2. `docs/openrouter.md`: secao de video (API assincrona 4 passos, SKUs `per-video-second`, cadeia e tetos).
+3. `docs/instagram-api.md`: secoes Reels e comentarios (`instagram_business_manage_comments` + nota do `refresh_access_token`).
+4. ADR-009 (pipeline de video skip-able) e ADR-010 (sugestoes via comentarios com fallback de permissao).
+5. `docs/prd.md`: RF-13..RF-22 e BR-012 atualizada.
+6. Nenhuma mudanca de codigo.
+
+**Dependencias:** RF-18, RF-22.
+
+---
+
 # Requisitos Nao Funcionais
 
 ## Performance
@@ -492,6 +679,10 @@ PostAudit (auditoria de Post)
 | ErrorCode | string(80) | |
 | FailureDetails | text | |
 | Caption | text | |
+| SourceCommentSuggestionId | long | FK CommentSuggestion (nullable) — MVP 2 |
+| VideoObjectKey | string(255) | Chave do video no MinIO (nullable) — MVP 2 |
+| VideoBytes | bigint | Tamanho do video (nullable) — MVP 2 |
+| VideoDurationSeconds | int | Duracao do video (nullable) — MVP 2 |
 | CreatedAt | DateTime(UTC) | |
 | UpdatedAt | DateTime(UTC) | |
 | PublishedAt | DateTime(UTC) | |
@@ -549,11 +740,25 @@ PostAudit (auditoria de Post)
 | NewValue | text | |
 | ChangedAt | DateTime(UTC) | |
 
+### CommentSuggestion (MVP 2)
+
+| Atributo | Tipo | Descricao |
+|---|---|---|
+| Id | long | PK |
+| CommentId | string(120) | Unique index (idempotencia) |
+| MediaId | string(120) | Post IG do comentario |
+| AuthorUsername | string(120) | Credito na legenda |
+| CommentText | text | Texto original |
+| Classification | enum | NotSuggestion/Rejected/Accepted |
+| RejectionReason | string(255) | Null quando Accepted |
+| ProcessedAt | DateTime(UTC) | |
+
 ## Enums
 
 - PostStatus: Generated, Validated, ImageProcessed, Published, Failed.
-- FailureStep: TextGeneration, SourceValidation, ImageGeneration, ImageStorage, Database, InstagramApi.
+- FailureStep: TextGeneration, SourceValidation, ImageGeneration, ImageStorage, Database, InstagramApi, VideoGeneration, VideoStorage, CommentModeration (3 ultimos MVP 2).
 - AttemptStatus: Success, Rejected, Error.
+- CommentClassification: NotSuggestion, Rejected, Accepted (MVP 2).
 
 ## Value Objects
 
@@ -586,7 +791,7 @@ Eventos sao logados no stdout, nao publicados em bus.
 - BR-009: MinIO quota 20 GB.
 - BR-010: Token Meta renovado antes de 14 dias para expiracao.
 - BR-011: Publicacao registrada.
-- BR-012: Apenas uma imagem por execucao.
+- BR-012: Apenas uma midia por execucao (imagem OU video).
 - BR-013: Post publicado atualiza `Status` e `PublishedAt`.
 - BR-014: Posts e imagens nunca excluidos.
 
@@ -673,6 +878,10 @@ Eventos sao logados no stdout, nao publicados em bus.
 | ErrorCode | VARCHAR(80) | sim | | |
 | FailureDetails | TEXT | sim | | |
 | Caption | TEXT | nao | | |
+| SourceCommentSuggestionId | BIGINT | sim | | FK -> CommentSuggestions(Id), MVP 2 |
+| VideoObjectKey | VARCHAR(255) | sim | | MVP 2 |
+| VideoBytes | BIGINT | sim | | MVP 2 |
+| VideoDurationSeconds | INT | sim | | MVP 2 |
 | CreatedAt | TIMESTAMP WITH TIME ZONE | nao | NOW() | |
 | UpdatedAt | TIMESTAMP WITH TIME ZONE | nao | NOW() | |
 | PublishedAt | TIMESTAMP WITH TIME ZONE | sim | | |
@@ -742,6 +951,21 @@ Eventos sao logados no stdout, nao publicados em bus.
 | IsEncrypted | BOOLEAN | nao | FALSE | |
 | Description | VARCHAR(255) | sim | | |
 | UpdatedAt | TIMESTAMP WITH TIME ZONE | nao | NOW() | |
+
+### CommentSuggestions (MVP 2)
+
+| Coluna | Tipo SQL | Nullable | Default | PK/FK |
+|---|---|---|---|---|
+| Id | BIGSERIAL | nao | | PK |
+| CommentId | VARCHAR(120) | nao | | |
+| MediaId | VARCHAR(120) | nao | | |
+| AuthorUsername | VARCHAR(120) | nao | | |
+| CommentText | TEXT | nao | | |
+| Classification | SMALLINT | nao | | |
+| RejectionReason | VARCHAR(255) | sim | | |
+| ProcessedAt | TIMESTAMP WITH TIME ZONE | nao | NOW() | |
+
+- UNIQUE (CommentId).
 
 ## Estrategia de soft delete
 

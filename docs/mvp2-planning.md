@@ -620,7 +620,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-23: Documentação e ADRs do MVP 2
+## [x] RF-23: Documentação e ADRs do MVP 2
 
 **User Story:** Como dono, quero a documentação atualizada refletindo o MVP 2 implementado, para manter o repositório como portfólio coerente.
 
