@@ -583,7 +583,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-21: TextGenerationStep com tema sugerido e crédito ao autor
+## [x] RF-21: TextGenerationStep com tema sugerido e crédito ao autor
 
 **User Story:** Como dono, quero que o post do dia use o tema da sugestão quando houver, com crédito `Suggested by @user` na legenda.
 

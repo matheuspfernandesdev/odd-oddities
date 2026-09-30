@@ -15,6 +15,15 @@ public interface ICommentSuggestionRepository
         string commentId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Returns the persisted <see cref="CommentSuggestion"/> for the given Meta CommentId,
+    /// or null when none exists. Used by TextGenerationStep (RF-21) to mark an accepted
+    /// suggestion as Rejected when its generated text fails editorial validation.
+    /// </summary>
+    Task<CommentSuggestion?> GetByCommentIdAsync(
+        string commentId,
+        CancellationToken cancellationToken = default);
+
     Task<CommentSuggestion> CreateAsync(
         CommentSuggestion suggestion,
         CancellationToken cancellationToken = default);

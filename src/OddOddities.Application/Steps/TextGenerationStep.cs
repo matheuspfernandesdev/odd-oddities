@@ -35,6 +35,7 @@ public sealed class TextGenerationStep : IPipelineStep
     private readonly IPostRepository _postRepository;
     private readonly IGenerationAttemptRepository _generationAttemptRepository;
     private readonly IModelSelectionService _modelSelection;
+    private readonly ICommentSuggestionRepository _commentSuggestionRepository;
     private readonly IOptions<AppConfiguration> _config;
     private readonly ILogger<TextGenerationStep> _logger;
 
@@ -46,6 +47,7 @@ public sealed class TextGenerationStep : IPipelineStep
         IPostRepository postRepository,
         IGenerationAttemptRepository generationAttemptRepository,
         IModelSelectionService modelSelection,
+        ICommentSuggestionRepository commentSuggestionRepository,
         IOptions<AppConfiguration> config,
         ILogger<TextGenerationStep> logger)
     {
@@ -54,6 +56,7 @@ public sealed class TextGenerationStep : IPipelineStep
         _postRepository = postRepository ?? throw new ArgumentNullException(nameof(postRepository));
         _generationAttemptRepository = generationAttemptRepository ?? throw new ArgumentNullException(nameof(generationAttemptRepository));
         _modelSelection = modelSelection ?? throw new ArgumentNullException(nameof(modelSelection));
+        _commentSuggestionRepository = commentSuggestionRepository ?? throw new ArgumentNullException(nameof(commentSuggestionRepository));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -113,11 +116,23 @@ public sealed class TextGenerationStep : IPipelineStep
 
                 TextGenerationResult result;
 
+                // RF-21 AC1: when an accepted comment suggestion is present, generate from
+                // the suggestion's theme/summary instead of the selected category/subcategory.
+                // The suggestion is captured per-iteration so a rejection (below) can clear
+                // context.Suggestion and let the same attempt loop fall back to the normal flow.
+                var suggestion = context.Suggestion;
+                var generationCategory = suggestion is not null
+                    ? suggestion.Theme
+                    : context.Selection.CategoryName;
+                var generationSubcategory = suggestion is not null
+                    ? suggestion.Summary
+                    : context.Selection.SubcategoryName;
+
                 try
                 {
                     result = await _textGenerationPort.GenerateCuriosityAsync(
-                        context.Selection.CategoryName,
-                        context.Selection.SubcategoryName,
+                        generationCategory,
+                        generationSubcategory,
                         candidate.Id,
                         cancellationToken);
                 }
@@ -220,6 +235,15 @@ public sealed class TextGenerationStep : IPipelineStep
 
                     lastRejectionCode = "TEXT_TOO_LONG";
                     lastRejectionReason = "TextContent exceeds max length";
+
+                    if (suggestion is not null &&
+                        await TryRejectSuggestionAndFallbackAsync(
+                            context, suggestion, "TEXT_TOO_LONG", cancellationToken))
+                    {
+                        attemptNumber--;
+                        modelContentAttempts--;
+                    }
+
                     continue;
                 }
 
@@ -247,6 +271,15 @@ public sealed class TextGenerationStep : IPipelineStep
 
                     lastRejectionCode = "HASH_DUPLICATE";
                     lastRejectionReason = "ContentHash duplicate detected";
+
+                    if (suggestion is not null &&
+                        await TryRejectSuggestionAndFallbackAsync(
+                            context, suggestion, "HASH_DUPLICATE", cancellationToken))
+                    {
+                        attemptNumber--;
+                        modelContentAttempts--;
+                    }
+
                     continue;
                 }
 
@@ -274,7 +307,32 @@ public sealed class TextGenerationStep : IPipelineStep
 
                     lastRejectionCode = "SUMMARY_SIMILAR";
                     lastRejectionReason = "Summary similarity detected";
+
+                    if (suggestion is not null &&
+                        await TryRejectSuggestionAndFallbackAsync(
+                            context, suggestion, "SUMMARY_SIMILAR", cancellationToken))
+                    {
+                        attemptNumber--;
+                        modelContentAttempts--;
+                    }
+
                     continue;
+                }
+
+                // RF-21 AC3/AC4: when this text originated from a comment suggestion, attach
+                // the source suggestion id and inject the "Suggested by @user" credit between
+                // the text and the source line.
+                long? sourceCommentSuggestionId = null;
+                var caption = $"{result.TextContent}\n\nSource: {result.SourceUrl}";
+
+                if (suggestion is not null)
+                {
+                    var suggestionEntity = await _commentSuggestionRepository.GetByCommentIdAsync(
+                        suggestion.CommentId,
+                        cancellationToken);
+
+                    sourceCommentSuggestionId = suggestionEntity?.Id;
+                    caption = $"{result.TextContent}\n\nSuggested by @{suggestion.AuthorUsername}\n\nSource: {result.SourceUrl}";
                 }
 
                 var post = new Post
@@ -287,7 +345,8 @@ public sealed class TextGenerationStep : IPipelineStep
                     ContentHash = contentHash,
                     SourceUrl = result.SourceUrl,
                     Status = PostStatus.Generated,
-                    Caption = $"{result.TextContent}\n\nSource: {result.SourceUrl}"
+                    SourceCommentSuggestionId = sourceCommentSuggestionId,
+                    Caption = caption
                 };
 
                 var createdPost = await _postRepository.CreateAsync(post, cancellationToken);
@@ -375,6 +434,59 @@ public sealed class TextGenerationStep : IPipelineStep
             or HttpRequestException
             or TaskCanceledException
             or InvalidOperationException;
+    }
+
+    /// <summary>
+    /// RF-21 AC2: when text generated from a comment suggestion is rejected by editorial
+    /// validation (length/hash/similarity), marks the persisted <see cref="CommentSuggestion"/>
+    /// as Rejected with the same reason and clears <see cref="PipelineContext.Suggestion"/> so
+    /// the current attempt loop falls back to the normal category flow. The suggestion attempt
+    /// does not consume one of the BR-006 generation attempts, so the caller rolls back its
+    /// attempt counters when this returns true. Returns true when the fallback was armed.
+    /// </summary>
+    private async Task<bool> TryRejectSuggestionAndFallbackAsync(
+        PipelineContext context,
+        SuggestionContext suggestion,
+        string rejectionReason,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var entity = await _commentSuggestionRepository.GetByCommentIdAsync(
+                suggestion.CommentId,
+                cancellationToken);
+
+            if (entity is not null)
+            {
+                entity.Classification = CommentClassification.Rejected;
+                entity.RejectionReason = rejectionReason;
+                await _commentSuggestionRepository.UpdateAsync(entity, cancellationToken);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Suggestion for CommentId {CommentId} rejected ({Reason}) but no persisted row was found to mark Rejected",
+                    suggestion.CommentId,
+                    rejectionReason);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Marking the suggestion Rejected must never break the fallback to the normal flow.
+            _logger.LogWarning(
+                ex,
+                "Failed to mark suggestion for CommentId {CommentId} as Rejected ({Reason}); falling back to category flow anyway",
+                suggestion.CommentId,
+                rejectionReason);
+        }
+
+        _logger.LogWarning(
+            "Comment suggestion by @{Author} rejected ({Reason}); falling back to the normal category flow",
+            suggestion.AuthorUsername,
+            rejectionReason);
+
+        context.Suggestion = null;
+        return true;
     }
 
     private async Task RecordAttemptAsync(

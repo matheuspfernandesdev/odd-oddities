@@ -30,6 +30,15 @@ public sealed class PostgresCommentSuggestionRepository : ICommentSuggestionRepo
     }
 
     /// <inheritdoc />
+    public async Task<CommentSuggestion?> GetByCommentIdAsync(
+        string commentId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.CommentSuggestions
+            .FirstOrDefaultAsync(cs => cs.CommentId == commentId, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<CommentSuggestion> CreateAsync(
         CommentSuggestion suggestion,
         CancellationToken cancellationToken = default)
