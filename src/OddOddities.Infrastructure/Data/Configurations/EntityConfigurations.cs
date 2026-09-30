@@ -121,6 +121,12 @@ public class PostConfiguration : IEntityTypeConfiguration<Post>
             .WithMany(s => s.Posts)
             .HasForeignKey(p => p.SubcategoryId);
 
+        // RF-19: nullable FK for traceability of posts generated from a comment suggestion.
+        builder.HasOne(p => p.SourceCommentSuggestion)
+            .WithMany()
+            .HasForeignKey(p => p.SourceCommentSuggestionId)
+            .OnDelete(DeleteBehavior.ClientSetNull);
+
         builder.HasIndex(p => new { p.Status, p.CreatedAt });
         builder.HasIndex(p => new { p.CategoryId, p.SubcategoryId, p.PublishedAt });
         builder.HasIndex(p => p.ContentHash);
@@ -240,5 +246,41 @@ public class PostAuditConfiguration : IEntityTypeConfiguration<PostAudit>
             .HasForeignKey(pa => pa.PostId);
 
         builder.HasIndex(pa => new { pa.PostId, pa.ChangedAt });
+    }
+}
+
+public class CommentSuggestionConfiguration : IEntityTypeConfiguration<CommentSuggestion>
+{
+    public void Configure(EntityTypeBuilder<CommentSuggestion> builder)
+    {
+        builder.ToTable("CommentSuggestions");
+
+        builder.HasKey(cs => cs.Id);
+
+        builder.Property(cs => cs.CommentId)
+            .HasMaxLength(120)
+            .IsRequired();
+
+        builder.Property(cs => cs.MediaId)
+            .HasMaxLength(120)
+            .IsRequired();
+
+        builder.Property(cs => cs.AuthorUsername)
+            .HasMaxLength(120)
+            .IsRequired();
+
+        builder.Property(cs => cs.CommentText)
+            .HasColumnType("text")
+            .IsRequired();
+
+        builder.Property(cs => cs.Classification)
+            .HasConversion<int>();
+
+        builder.Property(cs => cs.RejectionReason)
+            .HasMaxLength(255);
+
+        // RF-19: idempotency — a comment is never processed twice.
+        builder.HasIndex(cs => cs.CommentId)
+            .IsUnique();
     }
 }

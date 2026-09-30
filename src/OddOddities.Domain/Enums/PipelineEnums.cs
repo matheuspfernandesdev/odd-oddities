@@ -37,3 +37,13 @@ public enum AttemptStatus
     Rejected = 1,
     Error = 2
 }
+
+/// <summary>
+/// Represents the classification of a read Instagram comment (RF-19).
+/// </summary>
+public enum CommentClassification
+{
+    NotSuggestion = 0,
+    Rejected = 1,
+    Accepted = 2
+}

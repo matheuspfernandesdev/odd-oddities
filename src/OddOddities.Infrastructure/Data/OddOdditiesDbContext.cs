@@ -20,6 +20,7 @@ public class OddOdditiesDbContext : DbContext
     public DbSet<Publication> Publications => Set<Publication>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<PostAudit> PostAudits => Set<PostAudit>();
+    public DbSet<CommentSuggestion> CommentSuggestions => Set<CommentSuggestion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

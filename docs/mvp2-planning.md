@@ -539,7 +539,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-19: Cadeia de comentários — port, entidade e persistência
+## [x] RF-19: Cadeia de comentários — port, entidade e persistência
 
 **User Story:** Como dono, quero ler e registrar comentários com idempotência por CommentId, para nunca processar o mesmo comentário duas vezes.
 

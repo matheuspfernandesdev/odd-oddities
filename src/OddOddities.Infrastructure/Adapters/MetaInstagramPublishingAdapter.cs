@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -9,11 +10,12 @@ using OddOddities.Domain.ValueObjects;
 namespace OddOddities.Infrastructure.Adapters;
 
 /// <summary>
-/// Meta Graph API implementation of IInstagramPublishingPort.
-/// Handles media and Reels container creation, publishing, status polling, and token
-/// refresh via the Meta Graph API (RF-01, RF-03, RF-18).
+/// Meta Graph API implementation of IInstagramPublishingPort and IMediaCommentPort.
+/// Handles media and Reels container creation, publishing, status polling, token
+/// refresh, and comment reading/replying via the Meta Graph API (RF-01, RF-03,
+/// RF-18, RF-19).
 /// </summary>
-public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
+public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort, IMediaCommentPort
 {
     private readonly HttpClient _httpClient;
     private readonly MetaConfiguration _config;
@@ -262,6 +264,121 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
         return (result.AccessToken, expiresAt);
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<MediaComment>> GetCommentsAsync(
+        string mediaId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId))
+            throw new ArgumentException("Media ID cannot be null or empty.", nameof(mediaId));
+
+        _logger.LogDebug("Fetching comments for media {MediaId}", mediaId);
+
+        var comments = new List<MediaComment>();
+        string? after = null;
+
+        // The endpoint returns up to 50 top-level comments per call; keep following the
+        // "after" cursor until the API reports no further page (RF correction 8.1 item 5).
+        while (true)
+        {
+            var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{mediaId}/comments" +
+                      $"?limit=50" +
+                      $"&fields=id,text,timestamp,from.username" +
+                      $"&access_token={Uri.EscapeDataString(_config.AccessToken)}" +
+                      (after is null ? string.Empty : $"&after={Uri.EscapeDataString(after)}");
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+            // Dispose per iteration: the pagination loop can issue many requests per
+            // media, and an undisposed response keeps its connection out of the pool
+            // until finalization.
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            await EnsureSuccessAsync(response, "comments", cancellationToken);
+
+            var page = await response.Content.ReadFromJsonAsync<CommentsPageResponse>(
+                JsonOptions, cancellationToken);
+
+            var pageData = page?.Data;
+            if (pageData is not { Count: > 0 })
+            {
+                break; // exhausted
+            }
+
+            comments.AddRange(pageData.Select(MapComment));
+
+            var nextAfter = page?.Paging?.Cursors?.After;
+            if (string.IsNullOrEmpty(nextAfter) || nextAfter == after)
+            {
+                break; // last page (or cursor did not advance)
+            }
+
+            after = nextAfter;
+        }
+
+        _logger.LogDebug(
+            "Fetched {CommentCount} comments for media {MediaId}",
+            comments.Count,
+            mediaId);
+
+        return comments.AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task ReplyToCommentAsync(
+        string commentId,
+        string message,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(commentId))
+            throw new ArgumentException("Comment ID cannot be null or empty.", nameof(commentId));
+
+        if (string.IsNullOrWhiteSpace(message))
+            throw new ArgumentException("Reply message cannot be null or empty.", nameof(message));
+
+        _logger.LogInformation("Replying to Instagram comment {CommentId}", commentId);
+
+        var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{commentId}/replies" +
+                  $"?access_token={Uri.EscapeDataString(_config.AccessToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["message"] = message
+            })
+        };
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "comment reply", cancellationToken);
+
+        _logger.LogInformation("Replied to Instagram comment {CommentId}", commentId);
+    }
+
+    /// <summary>
+    /// Maps one comment payload from the Graph API (id, text, timestamp, from.username).
+    /// An unparseable timestamp becomes DateTime.MinValue (UTC) so client-side
+    /// "newer than last run" filters never discard the comment — idempotency handles it.
+    /// </summary>
+    private static MediaComment MapComment(CommentsPageData data) => new(
+        CommentId: data.Id ?? string.Empty,
+        Text: data.Text ?? string.Empty,
+        Timestamp: ParseTimestamp(data.Timestamp),
+        AuthorUsername: data.From?.Username ?? string.Empty);
+
+    private static DateTime ParseTimestamp(string? raw)
+    {
+        if (DateTime.TryParse(
+                raw,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        return DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc);
+    }
+
     /// <summary>
     /// Throws an <see cref="HttpRequestException"/> carrying the Meta error body, so the
     /// failure reason stored on the Post explains why the API rejected the call.
@@ -312,5 +429,47 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
 
         [JsonPropertyName("expires_in")]
         public long ExpiresIn { get; set; }
+    }
+
+    private sealed class CommentsPageResponse
+    {
+        [JsonPropertyName("data")]
+        public List<CommentsPageData>? Data { get; set; }
+
+        [JsonPropertyName("paging")]
+        public CommentsPaging? Paging { get; set; }
+    }
+
+    private sealed class CommentsPageData
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+
+        [JsonPropertyName("text")]
+        public string? Text { get; set; }
+
+        [JsonPropertyName("timestamp")]
+        public string? Timestamp { get; set; }
+
+        [JsonPropertyName("from")]
+        public CommentAuthor? From { get; set; }
+    }
+
+    private sealed class CommentAuthor
+    {
+        [JsonPropertyName("username")]
+        public string? Username { get; set; }
+    }
+
+    private sealed class CommentsPaging
+    {
+        [JsonPropertyName("cursors")]
+        public CommentCursors? Cursors { get; set; }
+    }
+
+    private sealed class CommentCursors
+    {
+        [JsonPropertyName("after")]
+        public string? After { get; set; }
     }
 }

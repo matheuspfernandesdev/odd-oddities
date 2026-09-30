@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using OddOddities.Infrastructure.Data;
@@ -11,9 +12,11 @@ using OddOddities.Infrastructure.Data;
 namespace OddOddities.Infrastructure.Migrations
 {
     [DbContext(typeof(OddOdditiesDbContext))]
-    partial class OddOdditiesDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260930095836_AddCommentSuggestions")]
+    partial class AddCommentSuggestions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

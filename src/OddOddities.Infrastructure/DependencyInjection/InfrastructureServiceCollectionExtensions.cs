@@ -22,6 +22,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ISystemSettingRepository, PostgresSystemSettingRepository>();
         services.AddScoped<IGenerationAttemptRepository, PostgresGenerationAttemptRepository>();
         services.AddScoped<IPostAuditRepository, PostgresPostAuditRepository>();
+        services.AddScoped<ICommentSuggestionRepository, PostgresCommentSuggestionRepository>();
 
         services.AddSingleton<ISchedulerPort, ScheduleService>();
         services.AddSingleton<IClock, SystemClock>();
@@ -82,6 +83,14 @@ public static class InfrastructureServiceCollectionExtensions
         });
 
         services.AddHttpClient<IInstagramPublishingPort, MetaInstagramPublishingAdapter>(client =>
+        {
+            client.BaseAddress = new Uri("https://graph.instagram.com");
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
+        });
+
+        // RF-19: same adapter (same Graph API host) exposed as the comment port.
+        services.AddHttpClient<IMediaCommentPort, MetaInstagramPublishingAdapter>(client =>
         {
             client.BaseAddress = new Uri("https://graph.instagram.com");
             client.Timeout = TimeSpan.FromSeconds(30);

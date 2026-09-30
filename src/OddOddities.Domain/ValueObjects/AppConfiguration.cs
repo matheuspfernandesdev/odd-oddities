@@ -24,6 +24,7 @@ public sealed class AppConfiguration
     public ScheduleConfiguration Schedule { get; set; } = new();
     public ImageProcessingConfiguration ImageProcessing { get; set; } = new();
     public VideoConfiguration Video { get; set; } = new();
+    public CommentsConfiguration Comments { get; set; } = new();
 }
 
 /// <summary>
@@ -177,4 +178,18 @@ public sealed class VideoConfiguration
             DurationSeconds,
             PipelineConstants.MinVideoDurationSeconds,
             PipelineConstants.MaxVideoDurationSeconds);
+}
+
+/// <summary>
+/// Comment suggestion feature configuration (RF-19). Defaults keep the feature off
+/// until the Instagram token carries the manage_comments permission, so the section
+/// is optional in appsettings.
+/// </summary>
+public sealed class CommentsConfiguration
+{
+    /// <summary>Feature flag: when false the comment flow is not executed at all.</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>How many of the latest published posts have their comments read. Default: 15.</summary>
+    public int LookbackPosts { get; set; } = 15;
 }

@@ -31,6 +31,15 @@ public interface IPostRepository
     /// </summary>
     Task<DateTime?> GetLatestVideoPublishedAtAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets the Meta media ids of the most recent published Posts that carry a
+    /// Publication.MetaMediaId, newest first, limited to <paramref name="limit"/> (RF-19).
+    /// Used as the comment lookback window (Comments.LookbackPosts).
+    /// </summary>
+    Task<IReadOnlyList<string>> GetLatestPublishedMediaIdsAsync(
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<Post>> SearchBySummarySimilarityAsync(
         string summary,
         double threshold = 0.80,

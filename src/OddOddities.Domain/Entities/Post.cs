@@ -28,6 +28,10 @@ public sealed class Post
     public string? ErrorCode { get; set; }
     public string? FailureDetails { get; set; }
     public string Caption { get; set; } = string.Empty;
+
+    /// <summary>Set when the post was generated from an accepted comment suggestion (RF-19).</summary>
+    public long? SourceCommentSuggestionId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? PublishedAt { get; set; }
@@ -35,5 +39,6 @@ public sealed class Post
     public Category Category { get; set; } = null!;
     public Subcategory Subcategory { get; set; } = null!;
     public Publication? Publication { get; set; }
+    public CommentSuggestion? SourceCommentSuggestion { get; set; }
     public ICollection<GenerationAttempt> GenerationAttempts { get; set; } = new List<GenerationAttempt>();
 }

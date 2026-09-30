@@ -167,6 +167,31 @@ public sealed class PostgresPostRepository : IPostRepository
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> GetLatestPublishedMediaIdsAsync(
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        // RF-19: the comment lookback window is "the N most recent published posts
+        // that were actually published to Instagram" (Publication.MetaMediaId).
+        // A non-positive limit means the feature is misconfigured (Comments.LookbackPosts
+        // <= 0): return nothing instead of failing — PostgreSQL rejects LIMIT < 0.
+        if (limit <= 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return await _context.Posts
+            .AsNoTracking()
+            .Where(p => p.Status == PostStatus.Published
+                && p.PublishedAt != null
+                && p.Publication != null)
+            .OrderByDescending(p => p.PublishedAt)
+            .Take(limit)
+            .Select(p => p.Publication!.MetaMediaId)
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<Post>> SearchBySummarySimilarityAsync(
         string summary,
         double threshold = 0.80,
