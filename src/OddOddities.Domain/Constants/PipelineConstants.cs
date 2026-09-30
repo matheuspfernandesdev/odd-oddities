@@ -121,6 +121,14 @@ public static class PipelineConstants
     /// ≈ 5 min of Meta processing time).
     /// </summary>
     public const int ReelsContainerPollingIntervalSeconds = 30;
+
+    /// <summary>
+    /// Extra seconds added on top of the Reels container polling budget
+    /// (<see cref="MaxReelsContainerPollingAttempts"/> ×
+    /// <see cref="ReelsContainerPollingIntervalSeconds"/>) to compute the publication
+    /// step timeout on video runs, covering media_publish plus permalink polling (RF-18).
+    /// </summary>
+    public const int ReelsPublicationStepTimeoutMarginSeconds = 60;
 }
 
 /// <summary>

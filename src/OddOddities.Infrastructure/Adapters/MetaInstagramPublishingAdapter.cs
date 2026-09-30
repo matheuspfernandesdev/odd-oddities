@@ -10,8 +10,8 @@ namespace OddOddities.Infrastructure.Adapters;
 
 /// <summary>
 /// Meta Graph API implementation of IInstagramPublishingPort.
-/// Handles media container creation, publishing, status polling, and token refresh
-/// via the Meta Graph API (RF-01, RF-03).
+/// Handles media and Reels container creation, publishing, status polling, and token
+/// refresh via the Meta Graph API (RF-01, RF-03, RF-18).
 /// </summary>
 public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
 {
@@ -71,6 +71,45 @@ public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
 
         _logger.LogInformation(
             "Media container created: mediaId={MediaId}",
+            result.Id);
+
+        return result.Id;
+    }
+
+    /// <inheritdoc />
+    public async Task<string> CreateReelsContainerAsync(
+        string videoUrl,
+        string caption,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(videoUrl))
+            throw new ArgumentException("Video URL cannot be null or empty.", nameof(videoUrl));
+
+        _logger.LogInformation(
+            "Creating Reels media container for Instagram user {InstagramUserId}",
+            _config.InstagramUserId);
+
+        var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{_config.InstagramUserId}/media" +
+                  $"?media_type=REELS" +
+                  $"&video_url={Uri.EscapeDataString(videoUrl)}" +
+                  $"&caption={Uri.EscapeDataString(caption)}" +
+                  $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "Reels media", cancellationToken);
+
+        var result = await response.Content.ReadFromJsonAsync<MediaContainerResponse>(
+            JsonOptions, cancellationToken);
+
+        if (string.IsNullOrEmpty(result?.Id))
+        {
+            throw new InvalidOperationException("Meta API returned an empty Reels media container ID.");
+        }
+
+        _logger.LogInformation(
+            "Reels media container created: mediaId={MediaId}",
             result.Id);
 
         return result.Id;

@@ -31,6 +31,16 @@ services:
       - AppConfiguration__ImageProcessing__Height=1080
       - AppConfiguration__ImageProcessing__Quality=85
       - AppConfiguration__ImageProcessing__WatermarkText=Odd Oddities
+      # Default mirrors appsettings AppConfiguration:Video:ModelId. A blank value here
+      # would override that default (env vars win over appsettings) whenever VIDEO_MODEL_ID
+      # is absent from .env, leaving video runs with an empty preferred model.
+      - AppConfiguration__Video__ModelId=${VIDEO_MODEL_ID:-bytedance/seedance-2.0-mini}
+      - AppConfiguration__Video__DurationSeconds=${VIDEO_DURATION_SECONDS:-5}
+      - AppConfiguration__Video__Resolution=${VIDEO_RESOLUTION:-480p}
+      - AppConfiguration__Video__AspectRatio=${VIDEO_ASPECT_RATIO:-9:16}
+      - AppConfiguration__Video__GenerateAudio=${VIDEO_GENERATE_AUDIO:-true}
+      - AppConfiguration__Video__IntervalDays=${VIDEO_INTERVAL_DAYS:-15}
+      - AppConfiguration__ModelSelection__MaxCostPerVideoRunUsd=${MAX_VIDEO_COST_PER_RUN_USD:-0.20}
     networks:
       - internal
     depends_on:

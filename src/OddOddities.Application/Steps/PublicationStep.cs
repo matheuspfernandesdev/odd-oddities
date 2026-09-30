@@ -11,6 +11,8 @@ namespace OddOddities.Application.Steps;
 /// Pipeline step for publishing to Instagram via Meta Graph API (RF-01).
 /// Generates presigned URL, creates the media container, waits for the container to be
 /// FINISHED, publishes the media, resolves the permalink, and persists the Publication record.
+/// Image runs publish through a regular media container; video runs (RF-18) publish the
+/// stored MP4 as a Reels container with video-specific container polling and step timeout.
 /// Business rules: BR-011 (publication recorded), BR-013 (Status + PublishedAt).
 /// </summary>
 public sealed class PublicationStep : IPipelineStep
@@ -44,15 +46,47 @@ public sealed class PublicationStep : IPipelineStep
     {
         var text = context.Text
             ?? throw new InvalidOperationException("PublicationStep requires a Text context.");
+
+        if (context.IsVideoRun && string.IsNullOrWhiteSpace(context.Video?.ObjectKey))
+        {
+            // Defensive: VideoGenerationStep fills context.Video on video runs (RF-17),
+            // so this should never happen. Fail with the video step so the reason is clear.
+            _logger.LogError(
+                "Video run reached publication without a usable Video context (missing Video or ObjectKey): PostId={PostId}",
+                text.PostId);
+
+            return StepResult.Failure(
+                FailureStep.VideoGeneration,
+                "Video run reached publication without a usable Video context (missing Video or ObjectKey)",
+                "VIDEO_CONTEXT_MISSING");
+        }
+
         var image = context.Image
             ?? throw new InvalidOperationException("PublicationStep requires an Image context.");
 
         _logger.LogInformation(
-            "Starting publication for PostId={PostId}",
-            text.PostId);
+            "Starting publication for PostId={PostId} (VideoRun={VideoRun})",
+            text.PostId,
+            context.IsVideoRun);
+
+        // Video runs publish a Reels container: longer Meta processing means a larger
+        // container polling budget and, in turn, a larger step timeout (RF-18 AC3).
+        var stepTimeoutSeconds = context.IsVideoRun
+            ? PipelineConstants.MaxReelsContainerPollingAttempts
+                * PipelineConstants.ReelsContainerPollingIntervalSeconds
+                + PipelineConstants.ReelsPublicationStepTimeoutMarginSeconds
+            : PipelineConstants.PublicationStepTimeoutSeconds;
+
+        var maxContainerPollingAttempts = context.IsVideoRun
+            ? PipelineConstants.MaxReelsContainerPollingAttempts
+            : PipelineConstants.MaxContainerPollingAttempts;
+
+        var containerPollingIntervalSeconds = context.IsVideoRun
+            ? PipelineConstants.ReelsContainerPollingIntervalSeconds
+            : PipelineConstants.PollingIntervalSeconds;
 
         using var stepTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        stepTimeout.CancelAfter(TimeSpan.FromSeconds(PipelineConstants.PublicationStepTimeoutSeconds));
+        stepTimeout.CancelAfter(TimeSpan.FromSeconds(stepTimeoutSeconds));
         var ct = stepTimeout.Token;
 
         var publication = new Publication
@@ -63,13 +97,18 @@ public sealed class PublicationStep : IPipelineStep
 
         try
         {
+            var mediaObjectKey = context.IsVideoRun
+                ? context.Video!.ObjectKey
+                : image.ImageObjectKey;
+
             var presignedUrl = await _presignedUrlPort.GeneratePresignedUrlAsync(
-                image.ImageObjectKey,
+                mediaObjectKey,
                 ct);
 
             _logger.LogInformation(
-                "Presigned URL generated for PostId={PostId}",
-                text.PostId);
+                "Presigned URL generated for PostId={PostId}, objectKey={ObjectKey}",
+                text.PostId,
+                mediaObjectKey);
 
             var post = await _postRepository.GetByIdAsync(text.PostId, ct);
             if (post is null)
@@ -81,23 +120,33 @@ public sealed class PublicationStep : IPipelineStep
                     "POST_NOT_FOUND");
             }
 
-            var containerId = await _instagramPublishingPort.CreateMediaContainerAsync(
-                presignedUrl,
-                post.Caption,
-                ct);
+            var containerId = context.IsVideoRun
+                ? await _instagramPublishingPort.CreateReelsContainerAsync(
+                    presignedUrl,
+                    post.Caption,
+                    ct)
+                : await _instagramPublishingPort.CreateMediaContainerAsync(
+                    presignedUrl,
+                    post.Caption,
+                    ct);
 
             publication.MetaMediaId = containerId;
 
             _logger.LogInformation(
-                "Media container created: containerId={ContainerId}",
-                containerId);
+                "Media container created: containerId={ContainerId}, videoRun={VideoRun}",
+                containerId,
+                context.IsVideoRun);
 
-            var (isReady, timedOut, containerStatus) = await WaitForContainerReadyAsync(containerId, ct);
+            var (isReady, timedOut, containerStatus) = await WaitForContainerReadyAsync(
+                containerId,
+                maxContainerPollingAttempts,
+                containerPollingIntervalSeconds,
+                ct);
             if (!isReady)
             {
                 var errorCode = timedOut ? "CONTAINER_TIMEOUT" : "CONTAINER_FAILED";
                 var reason = timedOut
-                    ? $"Media container not ready after {PipelineConstants.MaxContainerPollingAttempts} attempts"
+                    ? $"Media container not ready after {maxContainerPollingAttempts} attempts"
                     : $"Media container status: {containerStatus}";
 
                 _logger.LogError(
@@ -212,14 +261,14 @@ public sealed class PublicationStep : IPipelineStep
         {
             _logger.LogError(
                 "Publication step timed out after {TimeoutSeconds}s: PostId={PostId}",
-                PipelineConstants.PublicationStepTimeoutSeconds,
+                stepTimeoutSeconds,
                 text.PostId);
 
             await PersistPublicationAsync(publication, "TIMEOUT", "TIMEOUT", permalink: null);
 
             return StepResult.Failure(
                 FailureStep.InstagramApi,
-                $"Publication step timed out after {PipelineConstants.PublicationStepTimeoutSeconds}s",
+                $"Publication step timed out after {stepTimeoutSeconds}s",
                 "STEP_TIMEOUT");
         }
         catch (Exception ex)
@@ -241,16 +290,20 @@ public sealed class PublicationStep : IPipelineStep
     /// <summary>
     /// Polls the media container until Instagram reports it as publishable.
     /// The container must be FINISHED before media_publish, otherwise the API rejects the call.
+    /// Attempt count and interval are parameters so image runs use the short polling budget
+    /// while Reels containers (video runs) get the longer one (RF-18).
     /// </summary>
     private async Task<(bool IsReady, bool TimedOut, string StatusCode)> WaitForContainerReadyAsync(
         string containerId,
+        int maxAttempts,
+        int pollingIntervalSeconds,
         CancellationToken cancellationToken)
     {
-        for (var attempt = 1; attempt <= PipelineConstants.MaxContainerPollingAttempts; attempt++)
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             if (attempt > 1)
             {
-                await Task.Delay(TimeSpan.FromSeconds(PipelineConstants.PollingIntervalSeconds), cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(pollingIntervalSeconds), cancellationToken);
             }
 
             var statusCode = await _instagramPublishingPort.GetContainerStatusAsync(
@@ -260,7 +313,7 @@ public sealed class PublicationStep : IPipelineStep
             _logger.LogInformation(
                 "Media container status attempt {Attempt}/{MaxAttempts}: containerId={ContainerId}, statusCode={StatusCode}",
                 attempt,
-                PipelineConstants.MaxContainerPollingAttempts,
+                maxAttempts,
                 containerId,
                 statusCode);
 

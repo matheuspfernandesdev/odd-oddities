@@ -10,6 +10,15 @@ public interface IInstagramPublishingPort
         string caption,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Creates a Reels media container (media_type=REELS) for a video URL. The URL must be
+    /// publicly accessible because Meta downloads the video from it (RF-18).
+    /// </summary>
+    Task<string> CreateReelsContainerAsync(
+        string videoUrl,
+        string caption,
+        CancellationToken cancellationToken = default);
+
     Task<string> PublishMediaAsync(
         string creationId,
         CancellationToken cancellationToken = default);

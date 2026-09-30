@@ -519,7 +519,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-18: Publicação de Reels e configuração/deploy
+## [x] RF-18: Publicação de Reels e configuração/deploy
 
 **User Story:** Como dono, quero que o vídeo seja publicado como Reels pela mesma Meta Graph API e que a nova config chegue por env vars no padrão do projeto, para o deploy de produção funcionar sem mudanças manuais.
 

@@ -16,6 +16,7 @@ public class PublicationStepTests
     private const string ContainerId = "container-1";
     private const string MediaId = "media-9";
     private const string Permalink = "https://www.instagram.com/p/abc/";
+    private const string VideoObjectKey = "video.mp4";
 
     private readonly IPresignedUrlPort _presignedUrl = Substitute.For<IPresignedUrlPort>();
     private readonly IInstagramPublishingPort _instagram = Substitute.For<IInstagramPublishingPort>();
@@ -28,7 +29,7 @@ public class PublicationStepTests
     private PublicationStep CreateStep()
     {
         _presignedUrl.GeneratePresignedUrlAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns("https://storage.example.com/image.png");
+            .Returns(callInfo => $"https://storage.example.com/{callInfo.ArgAt<string>(0)}");
 
         _postRepository.GetByIdAsync(_post.Id, Arg.Any<CancellationToken>()).Returns(_post);
 
@@ -62,6 +63,16 @@ public class PublicationStepTests
         };
 
         return context;
+    }
+
+    private static PipelineContext NewVideoContext(long postId = 42)
+    {
+        return new PipelineContext
+        {
+            IsVideoRun = true,
+            Text = new TextContext(postId, "content", "summary", "theme", "hash", "source", "caption"),
+            Video = new VideoContext(VideoObjectKey, 512_000, 5, 0.05m, "bytedance/seedance-2.0-mini")
+        };
     }
 
     [Fact]
@@ -220,5 +231,116 @@ public class PublicationStepTests
         await act.Should().ThrowAsync<OperationCanceledException>();
         await _postRepository.DidNotReceive().UpdateAsync(Arg.Any<Post>(), Arg.Any<CancellationToken>());
         _post.Status.Should().Be(PostStatus.ImageProcessed);
+    }
+
+    [Fact]
+    public async Task Execute_VideoRun_CreatesReelsContainerFromVideoObjectKey()
+    {
+        var step = CreateStep();
+        _instagram.CreateReelsContainerAsync(
+                "https://storage.example.com/video.mp4",
+                _post.Caption,
+                Arg.Any<CancellationToken>())
+            .Returns(ContainerId);
+        _instagram.GetContainerStatusAsync(ContainerId, Arg.Any<CancellationToken>()).Returns("FINISHED");
+        _instagram.PublishMediaAsync(ContainerId, Arg.Any<CancellationToken>()).Returns(MediaId);
+        _instagram.GetMediaStatusAsync(MediaId, Arg.Any<CancellationToken>())
+            .Returns(("PUBLISHED", "PUBLISHED", Permalink));
+
+        var result = await step.ExecuteAsync(NewVideoContext());
+
+        result.IsSuccess.Should().BeTrue();
+        await _presignedUrl.Received(1).GeneratePresignedUrlAsync(VideoObjectKey, Arg.Any<CancellationToken>());
+        await _instagram.Received(1).CreateReelsContainerAsync(
+            "https://storage.example.com/video.mp4",
+            _post.Caption,
+            Arg.Any<CancellationToken>());
+        await _instagram.DidNotReceive().CreateMediaContainerAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+
+        _post.Status.Should().Be(PostStatus.Published);
+        _created.Should().NotBeNull();
+        _created!.MetaMediaId.Should().Be(MediaId);
+        _created.MetaMediaStatus.Should().Be("PUBLISHED");
+    }
+
+    [Fact]
+    public async Task Execute_VideoRunWithoutVideoContext_FailsWithVideoGenerationStep()
+    {
+        var step = CreateStep();
+
+        var context = NewVideoContext();
+        context.Video = null;
+
+        var result = await step.ExecuteAsync(context);
+
+        result.IsSuccess.Should().BeFalse();
+        result.FailureStep.Should().Be(FailureStep.VideoGeneration);
+        result.ErrorCode.Should().Be("VIDEO_CONTEXT_MISSING");
+
+        await _presignedUrl.DidNotReceive().GeneratePresignedUrlAsync(
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+        await _instagram.DidNotReceive().CreateReelsContainerAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+        await _instagram.DidNotReceive().CreateMediaContainerAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+
+        _post.Status.Should().Be(PostStatus.ImageProcessed);
+        _created.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Execute_VideoRunWithEmptyObjectKey_FailsWithVideoGenerationStep()
+    {
+        var step = CreateStep();
+
+        var context = NewVideoContext();
+        context.Video = context.Video! with { ObjectKey = string.Empty };
+
+        var result = await step.ExecuteAsync(context);
+
+        result.IsSuccess.Should().BeFalse();
+        result.FailureStep.Should().Be(FailureStep.VideoGeneration);
+        result.ErrorCode.Should().Be("VIDEO_CONTEXT_MISSING");
+
+        await _presignedUrl.DidNotReceive().GeneratePresignedUrlAsync(
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+        await _instagram.DidNotReceive().CreateReelsContainerAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+
+        _created.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Execute_ImageRun_DoesNotCreateReelsContainer()
+    {
+        var step = CreateStep();
+        _instagram.GetContainerStatusAsync(ContainerId, Arg.Any<CancellationToken>()).Returns("FINISHED");
+        _instagram.PublishMediaAsync(ContainerId, Arg.Any<CancellationToken>()).Returns(MediaId);
+        _instagram.GetMediaStatusAsync(MediaId, Arg.Any<CancellationToken>())
+            .Returns(("PUBLISHED", "PUBLISHED", Permalink));
+
+        var result = await step.ExecuteAsync(NewContext());
+
+        result.IsSuccess.Should().BeTrue();
+        await _presignedUrl.Received(1).GeneratePresignedUrlAsync("image.png", Arg.Any<CancellationToken>());
+        await _instagram.Received(1).CreateMediaContainerAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+        await _instagram.DidNotReceive().CreateReelsContainerAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
     }
 }
