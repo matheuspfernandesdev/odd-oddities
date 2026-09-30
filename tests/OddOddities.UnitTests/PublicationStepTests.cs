@@ -1,6 +1,7 @@
 using System.Net.Http;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using OddOddities.Application.Pipeline;
@@ -8,6 +9,7 @@ using OddOddities.Application.Steps;
 using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.UnitTests;
 
@@ -22,6 +24,8 @@ public class PublicationStepTests
     private readonly IInstagramPublishingPort _instagram = Substitute.For<IInstagramPublishingPort>();
     private readonly IPostRepository _postRepository = Substitute.For<IPostRepository>();
     private readonly IPublicationRepository _publicationRepository = Substitute.For<IPublicationRepository>();
+    private readonly IMediaCommentPort _mediaComment = Substitute.For<IMediaCommentPort>();
+    private readonly AppConfiguration _appConfig = new();
 
     private readonly Post _post = new() { Id = 42, Caption = "A caption", Status = PostStatus.ImageProcessed };
     private Publication? _created;
@@ -51,6 +55,8 @@ public class PublicationStepTests
             _instagram,
             _postRepository,
             _publicationRepository,
+            _mediaComment,
+            Options.Create(_appConfig),
             NullLogger<PublicationStep>.Instance);
     }
 
@@ -341,6 +347,105 @@ public class PublicationStepTests
         await _instagram.DidNotReceive().CreateReelsContainerAsync(
             Arg.Any<string>(),
             Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    private static void WithSuggestion(PipelineContext context)
+    {
+        context.Suggestion = new SuggestionContext(
+            Theme: "theme",
+            Summary: "summary",
+            AuthorUsername: "curious_fan",
+            CommentId: "comment-77",
+            SourceCommentText: "You should post about tardigrades!");
+    }
+
+    private void ArrangePublishedRun()
+    {
+        _instagram.GetContainerStatusAsync(ContainerId, Arg.Any<CancellationToken>()).Returns("FINISHED");
+        _instagram.PublishMediaAsync(ContainerId, Arg.Any<CancellationToken>()).Returns(MediaId);
+        _instagram.GetMediaStatusAsync(MediaId, Arg.Any<CancellationToken>())
+            .Returns(("PUBLISHED", "PUBLISHED", Permalink));
+    }
+
+    [Fact]
+    public async Task Execute_SuggestionRunWithCommentsEnabled_RepliesToAuthor()
+    {
+        _appConfig.Comments.Enabled = true;
+        var step = CreateStep();
+        ArrangePublishedRun();
+
+        var context = NewContext();
+        WithSuggestion(context);
+
+        var result = await step.ExecuteAsync(context);
+
+        result.IsSuccess.Should().BeTrue();
+        await _mediaComment.Received(1).ReplyToCommentAsync(
+            "comment-77",
+            "Thanks for the suggestion!",
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Execute_SuggestionRunWithCommentsDisabled_DoesNotReply()
+    {
+        _appConfig.Comments.Enabled = false;
+        var step = CreateStep();
+        ArrangePublishedRun();
+
+        var context = NewContext();
+        WithSuggestion(context);
+
+        var result = await step.ExecuteAsync(context);
+
+        result.IsSuccess.Should().BeTrue();
+        await _mediaComment.DidNotReceive().ReplyToCommentAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Execute_NoSuggestionWithCommentsEnabled_DoesNotReply()
+    {
+        _appConfig.Comments.Enabled = true;
+        var step = CreateStep();
+        ArrangePublishedRun();
+
+        var result = await step.ExecuteAsync(NewContext());
+
+        result.IsSuccess.Should().BeTrue();
+        await _mediaComment.DidNotReceive().ReplyToCommentAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Execute_ReplyFails_StillSucceedsAndKeepsPostPublished()
+    {
+        _appConfig.Comments.Enabled = true;
+        var step = CreateStep();
+        ArrangePublishedRun();
+        _mediaComment.ReplyToCommentAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException(
+                "Meta reply failed with 403 (Forbidden): {\"error\":{\"code\":10}}"));
+
+        var context = NewContext();
+        WithSuggestion(context);
+
+        var result = await step.ExecuteAsync(context);
+
+        result.IsSuccess.Should().BeTrue();
+        _post.Status.Should().Be(PostStatus.Published);
+        _created!.MetaMediaStatus.Should().Be("PUBLISHED");
+        await _mediaComment.Received(1).ReplyToCommentAsync(
+            "comment-77",
+            "Thanks for the suggestion!",
             Arg.Any<CancellationToken>());
     }
 }

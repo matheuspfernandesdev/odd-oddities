@@ -601,7 +601,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-22: Reply pós-publicação e feature flag de comentários
+## [x] RF-22: Reply pós-publicação e feature flag de comentários
 
 **User Story:** Como dono, quero agradecer o autor da sugestão depois de publicar, sem que uma falha de reply afete a publicação.
 

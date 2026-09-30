@@ -1,9 +1,11 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OddOddities.Application.Pipeline;
 using OddOddities.Domain.Constants;
 using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.Application.Steps;
 
@@ -21,6 +23,8 @@ public sealed class PublicationStep : IPipelineStep
     private readonly IInstagramPublishingPort _instagramPublishingPort;
     private readonly IPostRepository _postRepository;
     private readonly IPublicationRepository _publicationRepository;
+    private readonly IMediaCommentPort _mediaCommentPort;
+    private readonly IOptions<AppConfiguration> _config;
     private readonly ILogger<PublicationStep> _logger;
 
     public string StepName => "InstagramApi";
@@ -30,12 +34,16 @@ public sealed class PublicationStep : IPipelineStep
         IInstagramPublishingPort instagramPublishingPort,
         IPostRepository postRepository,
         IPublicationRepository publicationRepository,
+        IMediaCommentPort mediaCommentPort,
+        IOptions<AppConfiguration> config,
         ILogger<PublicationStep> logger)
     {
         _presignedUrlPort = presignedUrlPort ?? throw new ArgumentNullException(nameof(presignedUrlPort));
         _instagramPublishingPort = instagramPublishingPort ?? throw new ArgumentNullException(nameof(instagramPublishingPort));
         _postRepository = postRepository ?? throw new ArgumentNullException(nameof(postRepository));
         _publicationRepository = publicationRepository ?? throw new ArgumentNullException(nameof(publicationRepository));
+        _mediaCommentPort = mediaCommentPort ?? throw new ArgumentNullException(nameof(mediaCommentPort));
+        _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -250,6 +258,14 @@ public sealed class PublicationStep : IPipelineStep
                 text.PostId,
                 mediaId);
 
+            // RF-22: thank the suggestion author. This happens only after the publication is
+            // fully persisted and is strictly fire-and-forget — the post is already live, so a
+            // reply failure must never fail the step nor mark the Post Failed. The original
+            // cancellationToken is honored (host shutdown), but the step timeout is deliberately
+            // NOT reused: the reply gets its own short budget so it cannot inherit a token that
+            // is already near expiry.
+            await ReplyToSuggestionAuthorAsync(context, cancellationToken);
+
             return StepResult.Success();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -284,6 +300,61 @@ public sealed class PublicationStep : IPipelineStep
                 FailureStep.InstagramApi,
                 $"Publication failed: {ex.Message}",
                 ex.GetType().Name);
+        }
+    }
+
+    private const string SuggestionThankYouMessage = "Thanks for the suggestion!";
+    private const int ReplyTimeoutSeconds = 10;
+
+    /// <summary>
+    /// Fire-and-forget "thank you" reply to the accepted suggestion author (RF-22).
+    /// Only runs when a suggestion drove this run and the Comments feature flag is on.
+    /// The publication already succeeded, so any failure here is logged as a warning and
+    /// swallowed — it must never fail the step nor mark the Post Failed. A dedicated short
+    /// timeout is used so the reply never inherits the (possibly near-expiry) step timeout.
+    /// </summary>
+    private async Task ReplyToSuggestionAuthorAsync(
+        PipelineContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.Suggestion is not { } suggestion || !_config.Value.Comments.Enabled)
+        {
+            return;
+        }
+
+        // Fresh linked token: honor host shutdown (cancellationToken) but give the reply its
+        // own 10s budget instead of the step timeout, which may already be near expiry.
+        using var replyTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        replyTimeout.CancelAfter(TimeSpan.FromSeconds(ReplyTimeoutSeconds));
+
+        try
+        {
+            await _mediaCommentPort.ReplyToCommentAsync(
+                suggestion.CommentId,
+                SuggestionThankYouMessage,
+                replyTimeout.Token);
+
+            _logger.LogInformation(
+                "Replied to suggestion author on comment {CommentId}",
+                suggestion.CommentId);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Host shutdown: the post is already live, so just note it and move on.
+            _logger.LogWarning(
+                "Reply to suggestion author on comment {CommentId} cancelled by host shutdown",
+                suggestion.CommentId);
+        }
+        catch (Exception ex)
+        {
+            // Never retry and never propagate: the publication already happened. Permission
+            // errors (403 / Meta codes 10/190/3) and any other failure land here as a single
+            // warning (AC4). Detection is intentionally kept minimal (message contains the code
+            // or HTTP status) rather than duplicating CommentSuggestionStep's regex helper.
+            _logger.LogWarning(
+                ex,
+                "Failed to reply to suggestion author on comment {CommentId}; publication is unaffected",
+                suggestion.CommentId);
         }
     }
 

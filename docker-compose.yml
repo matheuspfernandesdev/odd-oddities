@@ -41,6 +41,8 @@ services:
       - AppConfiguration__Video__GenerateAudio=${VIDEO_GENERATE_AUDIO:-true}
       - AppConfiguration__Video__IntervalDays=${VIDEO_INTERVAL_DAYS:-15}
       - AppConfiguration__ModelSelection__MaxCostPerVideoRunUsd=${MAX_VIDEO_COST_PER_RUN_USD:-0.20}
+      - AppConfiguration__Comments__Enabled=${COMMENTS_ENABLED:-false}
+      - AppConfiguration__Comments__LookbackPosts=${COMMENTS_LOOKBACK_POSTS:-15}
     networks:
       - internal
     depends_on:
