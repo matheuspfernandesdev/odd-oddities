@@ -19,6 +19,9 @@ public static class ApplicationServiceCollectionExtensions
 
         services.AddScoped<IModelSelectionService, ModelSelectionService>();
 
+        // CommentSuggestionStep must run before TextGenerationStep (RF-20 AC1); MS.DI
+        // resolves IEnumerable<IPipelineStep> in registration order.
+        services.AddScoped<IPipelineStep, CommentSuggestionStep>();
         services.AddScoped<IPipelineStep, TextGenerationStep>();
         services.AddScoped<IPipelineStep, ImageGenerationStep>();
         // VideoGenerationStep must run after ImageGenerationStep (RF-17 AC6); MS.DI

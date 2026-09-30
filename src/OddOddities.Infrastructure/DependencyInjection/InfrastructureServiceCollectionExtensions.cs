@@ -56,6 +56,14 @@ public static class InfrastructureServiceCollectionExtensions
             client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
         });
 
+        services.AddHttpClient<ICommentClassificationPort, OpenRouterCommentClassificationAdapter>((sp, client) =>
+        {
+            var config = sp.GetRequiredService<IOptions<AppConfiguration>>().Value.OpenRouter;
+            client.BaseAddress = new Uri(EnsureTrailingSlash(config.BaseUrl));
+            client.Timeout = TimeSpan.FromSeconds(60);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
+        });
+
         services.AddHttpClient<IImageGenerationPort, OpenRouterImageGenerationAdapter>((sp, client) =>
         {
             var config = sp.GetRequiredService<IOptions<AppConfiguration>>().Value.OpenRouter;

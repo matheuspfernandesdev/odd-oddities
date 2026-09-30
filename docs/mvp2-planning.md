@@ -560,7 +560,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-20: CommentSuggestionStep — classificação IA e decisão
+## [x] RF-20: CommentSuggestionStep — classificação IA e decisão
 
 **User Story:** Como dono, quero que comentários que sugerem temas virem input do post do dia, com classificação por IA e no máximo 1 sugestão por execução.
 
