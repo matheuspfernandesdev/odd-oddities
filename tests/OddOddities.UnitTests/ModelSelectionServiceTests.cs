@@ -27,6 +27,19 @@ public class ModelSelectionServiceTests
     private static ModelDescriptor Image(string id, decimal? imageOutput, bool isFree = false)
         => new(id, id, null, null, imageOutput, isFree, null, 0);
 
+    private static VideoModelDescriptor Video(
+        string id,
+        decimal? pricePerSecond,
+        int[]? durations = null,
+        string[]? aspectRatios = null)
+        => new(
+            Id: id,
+            Name: id,
+            PricePerSecondUsd: pricePerSecond,
+            SupportedDurations: durations ?? new[] { 5, 8 },
+            SupportedAspectRatios: aspectRatios ?? new[] { "9:16", "16:9" },
+            Created: 0);
+
     [Fact]
     public async Task GetTextChain_PreferredFirst_ThenCatalogCandidates_RespectingMax()
     {
@@ -162,5 +175,116 @@ public class ModelSelectionServiceTests
             "paid/3",
             "paid/4",
             "paid/5");
+    }
+
+    [Fact]
+    public async Task GetVideoChain_PreferredFirst_ThenFree_ThenCheapestPerSecond_RespectsMax()
+    {
+        _config.Video.ModelId = "preferred/video";
+        _config.ModelSelection.MaxVideoModelAttempts = 4;
+        // Cost ceiling is covered by its own test; keep it out of the way here.
+        _config.ModelSelection.MaxVideoCostPerRequestUsd = 10m;
+
+        // Deliberately unordered: the service must sort free -> cheapest per second.
+        _catalog.GetVideoModelsAsync(Arg.Any<CancellationToken>()).Returns(new List<VideoModelDescriptor>
+        {
+            Video("pricier/v", 0.50m),
+            Video("mid/v", 0.08m),
+            Video("free/v", 0m),
+            Video("cheap/v", 0.03m)
+        });
+
+        var chain = await CreateService().GetVideoChainAsync();
+
+        chain.Select(m => m.Id).Should().Equal("preferred/video", "free/v", "cheap/v", "mid/v");
+    }
+
+    [Fact]
+    public async Task GetVideoChain_FiltersByAspectRatioAndDuration()
+    {
+        _config.Video.ModelId = "";
+        _config.Video.AspectRatio = "9:16";
+        _config.Video.DurationSeconds = 5;
+        // Cost ceiling is covered by its own test; keep it out of the way here.
+        _config.ModelSelection.MaxVideoCostPerRequestUsd = 1m;
+
+        _catalog.GetVideoModelsAsync(Arg.Any<CancellationToken>()).Returns(new List<VideoModelDescriptor>
+        {
+            Video("ok/v", 0.05m, durations: new[] { 4, 5, 6 }, aspectRatios: new[] { "9:16", "16:9" }),
+            Video("landscape/v", 0.01m, durations: new[] { 5 }, aspectRatios: new[] { "16:9" }),
+            Video("wrong-duration/v", 0.01m, durations: new[] { 8 }, aspectRatios: new[] { "9:16" }),
+            Video("no-params/v", 0.01m, durations: Array.Empty<int>(), aspectRatios: Array.Empty<string>())
+        });
+
+        var chain = await CreateService().GetVideoChainAsync();
+
+        chain.Select(m => m.Id).Should().Equal("ok/v");
+    }
+
+    [Fact]
+    public async Task GetVideoChain_ExcludesCandidatesAboveCostPerRequestCap()
+    {
+        _config.Video.ModelId = "";
+        _config.Video.DurationSeconds = 5;
+        _config.ModelSelection.MaxVideoCostPerRequestUsd = 0.15m;
+
+        _catalog.GetVideoModelsAsync(Arg.Any<CancellationToken>()).Returns(new List<VideoModelDescriptor>
+        {
+            // 0.04 * 5 = 0.20 > 0.15 → excluded
+            Video("over/cap/v", 0.04m),
+            // 0.03 * 5 = 0.15 <= 0.15 → included (boundary is inclusive)
+            Video("within/cap/v", 0.03m),
+            Video("free/v", 0m)
+        });
+
+        var chain = await CreateService().GetVideoChainAsync();
+
+        chain.Select(m => m.Id).Should().Equal("free/v", "within/cap/v");
+    }
+
+    [Fact]
+    public async Task GetVideoChain_PreferredMissingFromCatalog_GoesFirst()
+    {
+        _config.Video.ModelId = "gone/invalid-video-model";
+        _config.ModelSelection.MaxVideoModelAttempts = 2;
+
+        _catalog.GetVideoModelsAsync(Arg.Any<CancellationToken>()).Returns(new List<VideoModelDescriptor>
+        {
+            Video("cheap/v", 0.03m),
+            Video("mid/v", 0.06m)
+        });
+
+        var chain = await CreateService().GetVideoChainAsync();
+
+        chain.Select(m => m.Id).Should().Equal("gone/invalid-video-model", "cheap/v");
+    }
+
+    [Fact]
+    public async Task GetVideoChain_CatalogFailure_FallsBackToPreferredOnly()
+    {
+        _config.Video.ModelId = "preferred/video";
+
+        _catalog.GetVideoModelsAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<IReadOnlyList<VideoModelDescriptor>>>(_ =>
+                throw new HttpRequestException("catalog down"));
+
+        var chain = await CreateService().GetVideoChainAsync();
+
+        chain.Should().ContainSingle().Which.Id.Should().Be("preferred/video");
+    }
+
+    [Fact]
+    public async Task GetVideoChain_CatalogFetchedOncePerScope()
+    {
+        _config.Video.ModelId = "preferred/video";
+
+        _catalog.GetVideoModelsAsync(Arg.Any<CancellationToken>())
+            .Returns(new List<VideoModelDescriptor> { Video("cheap/v", 0.03m) });
+
+        var service = CreateService();
+        await service.GetVideoChainAsync();
+        await service.GetVideoChainAsync();
+
+        await _catalog.Received(1).GetVideoModelsAsync(Arg.Any<CancellationToken>());
     }
 }

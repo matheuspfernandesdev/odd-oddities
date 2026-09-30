@@ -14,8 +14,10 @@ public sealed class ModelSelectionService : IModelSelectionService
 
     private bool _textCatalogLoaded;
     private bool _imageCatalogLoaded;
+    private bool _videoCatalogLoaded;
     private IReadOnlyList<ModelDescriptor>? _textCatalog;
     private IReadOnlyList<ModelDescriptor>? _imageCatalog;
+    private IReadOnlyList<VideoModelDescriptor>? _videoCatalog;
 
     public ModelSelectionService(
         IModelCatalogPort modelCatalog,
@@ -37,7 +39,17 @@ public sealed class ModelSelectionService : IModelSelectionService
             preferredId: _config.OpenRouter.TextModelId,
             catalog: catalog,
             maxModels: settings.MaxTextModelAttempts,
-            isEligible: m => IsTextEligible(m, settings));
+            idSelector: m => m.Id,
+            isEligible: m => IsTextEligible(m, settings),
+            createPreferredFallback: id => new ModelDescriptor(
+                Id: id,
+                Name: id,
+                PromptPricePerToken: null,
+                CompletionPricePerToken: null,
+                ImageOutputPrice: null,
+                IsFree: false,
+                ContextLength: null,
+                Created: 0));
     }
 
     /// <inheritdoc />
@@ -50,7 +62,45 @@ public sealed class ModelSelectionService : IModelSelectionService
             preferredId: _config.OpenRouter.ImageModelId,
             catalog: catalog,
             maxModels: settings.MaxImageModelAttempts,
-            isEligible: m => IsImageEligible(m, settings));
+            idSelector: m => m.Id,
+            isEligible: m => IsImageEligible(m, settings),
+            createPreferredFallback: id => new ModelDescriptor(
+                Id: id,
+                Name: id,
+                PromptPricePerToken: null,
+                CompletionPricePerToken: null,
+                ImageOutputPrice: null,
+                IsFree: false,
+                ContextLength: null,
+                Created: 0));
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<VideoModelDescriptor>> GetVideoChainAsync(CancellationToken cancellationToken = default)
+    {
+        var catalog = await LoadVideoCatalogAsync(cancellationToken);
+        var settings = _config.ModelSelection;
+        var video = _config.Video;
+
+        // Guarantee free -> cheapest-per-second order regardless of catalog order.
+        var orderedCatalog = catalog?
+            .OrderByDescending(m => m.IsFree)
+            .ThenBy(m => m.PricePerSecondUsd ?? decimal.MaxValue)
+            .ToList();
+
+        return BuildChain(
+            preferredId: video.ModelId,
+            catalog: orderedCatalog,
+            maxModels: settings.MaxVideoModelAttempts,
+            idSelector: m => m.Id,
+            isEligible: m => IsVideoEligible(m, video, settings),
+            createPreferredFallback: id => new VideoModelDescriptor(
+                Id: id,
+                Name: id,
+                PricePerSecondUsd: null,
+                SupportedDurations: Array.Empty<int>(),
+                SupportedAspectRatios: Array.Empty<string>(),
+                Created: 0));
     }
 
     private async Task<IReadOnlyList<ModelDescriptor>?> LoadTextCatalogAsync(CancellationToken cancellationToken)
@@ -105,13 +155,42 @@ public sealed class ModelSelectionService : IModelSelectionService
         return _imageCatalog;
     }
 
-    private IReadOnlyList<ModelDescriptor> BuildChain(
-        string preferredId,
-        IReadOnlyList<ModelDescriptor>? catalog,
-        int maxModels,
-        Func<ModelDescriptor, bool> isEligible)
+    private async Task<IReadOnlyList<VideoModelDescriptor>?> LoadVideoCatalogAsync(CancellationToken cancellationToken)
     {
-        var chain = new List<ModelDescriptor>();
+        if (_videoCatalogLoaded)
+            return _videoCatalog;
+
+        _videoCatalogLoaded = true;
+
+        try
+        {
+            _videoCatalog = await _modelCatalog.GetVideoModelsAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to fetch OpenRouter video model catalog; falling back to configured model only");
+            _videoCatalog = null;
+        }
+
+        return _videoCatalog;
+    }
+
+    private IReadOnlyList<T> BuildChain<T>(
+        string preferredId,
+        IReadOnlyList<T>? catalog,
+        int maxModels,
+        Func<T, string> idSelector,
+        Func<T, bool> isEligible,
+        Func<string, T> createPreferredFallback)
+        where T : class
+    {
+        var chain = new List<T>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         if (!string.IsNullOrWhiteSpace(preferredId))
@@ -119,19 +198,11 @@ public sealed class ModelSelectionService : IModelSelectionService
             // Preferred model goes first even when missing from the catalog
             // (unknown pricing is tolerated for the configured model only).
             var preferred = catalog?.FirstOrDefault(m =>
-                                string.Equals(m.Id, preferredId, StringComparison.OrdinalIgnoreCase))
-                            ?? new ModelDescriptor(
-                                Id: preferredId,
-                                Name: preferredId,
-                                PromptPricePerToken: null,
-                                CompletionPricePerToken: null,
-                                ImageOutputPrice: null,
-                                IsFree: false,
-                                ContextLength: null,
-                                Created: 0);
+                                string.Equals(idSelector(m), preferredId, StringComparison.OrdinalIgnoreCase))
+                            ?? createPreferredFallback(preferredId);
 
             chain.Add(preferred);
-            seen.Add(preferred.Id);
+            seen.Add(idSelector(preferred));
         }
 
         if (catalog is not null)
@@ -141,12 +212,12 @@ public sealed class ModelSelectionService : IModelSelectionService
                 if (chain.Count >= maxModels)
                     break;
 
-                if (!seen.Add(model.Id))
+                if (!seen.Add(idSelector(model)))
                     continue;
 
                 if (!isEligible(model))
                 {
-                    seen.Remove(model.Id);
+                    seen.Remove(idSelector(model));
                     continue;
                 }
 
@@ -158,7 +229,7 @@ public sealed class ModelSelectionService : IModelSelectionService
             "Built model chain ({Count} models, max {Max}): {Models}",
             chain.Count,
             maxModels,
-            string.Join(" -> ", chain.Select(m => m.Id)));
+            string.Join(" -> ", chain.Select(idSelector)));
 
         return chain;
     }
@@ -186,5 +257,24 @@ public sealed class ModelSelectionService : IModelSelectionService
             return false;
 
         return model.ImageOutputPrice <= settings.MaxImageCostPerRequestUsd;
+    }
+
+    private static bool IsVideoEligible(
+        VideoModelDescriptor model,
+        VideoConfiguration video,
+        ModelSelectionConfiguration settings)
+    {
+        if (!model.SupportedAspectRatios.Contains(video.AspectRatio, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        if (!model.SupportedDurations.Contains(video.DurationSeconds))
+            return false;
+
+        // Skip models with unknown pricing (cannot verify the per-second cap); only the
+        // configured model may reach the chain without a known price.
+        if (model.PricePerSecondUsd is null)
+            return false;
+
+        return model.PricePerSecondUsd * video.DurationSeconds <= settings.MaxVideoCostPerRequestUsd;
     }
 }

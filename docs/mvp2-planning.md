@@ -480,7 +480,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-16: Cadeia de modelos de vídeo (catálogo dinâmico)
+## [x] RF-16: Cadeia de modelos de vídeo (catálogo dinâmico)
 
 **User Story:** Como dono, quero a cadeia de modelos de vídeo seguindo o padrão ADR-008, para pagar o mínimo por segundo dentro dos tetos.
 
