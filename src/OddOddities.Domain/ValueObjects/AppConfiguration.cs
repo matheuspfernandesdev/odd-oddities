@@ -1,3 +1,5 @@
+using OddOddities.Domain.Constants;
+
 namespace OddOddities.Domain.ValueObjects;
 
 /// <summary>
@@ -163,4 +165,16 @@ public sealed class VideoConfiguration
 
     /// <summary>Minimum days between two published videos. Default: 15.</summary>
     public int IntervalDays { get; set; } = 15;
+
+    /// <summary>
+    /// Effective clip duration sent to the video API (RF-17): the configured value clamped
+    /// to the Reels-compatible range [MinVideoDurationSeconds, MaxVideoDurationSeconds].
+    /// Single source of truth for the request parameter, the pre-call budget estimate and
+    /// Post.VideoDurationSeconds.
+    /// </summary>
+    public int GetEffectiveDurationSeconds()
+        => Math.Clamp(
+            DurationSeconds,
+            PipelineConstants.MinVideoDurationSeconds,
+            PipelineConstants.MaxVideoDurationSeconds);
 }

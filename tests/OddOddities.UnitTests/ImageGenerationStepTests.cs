@@ -139,6 +139,24 @@ public class ImageGenerationStepTests
     }
 
     [Fact]
+    public async Task Execute_VideoRun_SkipsWithoutGenerating()
+    {
+        var step = CreateStep();
+        SetupChain(Model("img-a"));
+
+        var context = NewContext();
+        context.IsVideoRun = true;
+
+        var result = await step.ExecuteAsync(context);
+
+        result.Outcome.Should().Be(StepOutcome.Skipped);
+        await _imagePort.DidNotReceive()
+            .GenerateImageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _objectStorage.DidNotReceive()
+            .PutObjectAsync(Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Execute_ModelErrorWithLongMessage_TruncatesRejectionReasonTo255()
     {
         var step = CreateStep();

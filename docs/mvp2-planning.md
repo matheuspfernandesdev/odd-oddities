@@ -499,7 +499,7 @@ Revisão do planejamento contra o código atual (`PipelineOrchestrator`, `StepRe
 
 ---
 
-## [ ] RF-17: Geração de vídeo via OpenRouter (assíncrono)
+## [x] RF-17: Geração de vídeo via OpenRouter (assíncrono)
 
 **User Story:** Como dono, quero gerar MP4s verticais curtos via API assíncrona da OpenRouter, para publicar Reels sem intervenção.
 

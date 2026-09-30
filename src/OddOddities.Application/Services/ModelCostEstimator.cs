@@ -35,6 +35,21 @@ public static class ModelCostEstimator
         return model.ImageOutputPrice ?? 0m;
     }
 
+    /// <summary>
+    /// Estimated USD cost of one video generation request for the given model:
+    /// cost per second of video x clip duration.
+    /// </summary>
+    public static decimal EstimateVideoCostPerRequest(VideoModelDescriptor model, int durationSeconds)
+    {
+        if (model.IsFree)
+            return 0m;
+
+        // Unknown pricing (e.g. preferred model missing from the catalog): cannot
+        // estimate - treat as 0 so the preferred model is never filtered out;
+        // the actual cost still accumulates after the call.
+        return (model.PricePerSecondUsd ?? 0m) * durationSeconds;
+    }
+
     /// <summary>Returns true when the estimated cost still fits in the run budget.</summary>
     public static bool FitsBudget(decimal accumulatedCostUsd, decimal estimatedCostUsd, decimal maxCostPerRunUsd)
         => accumulatedCostUsd + estimatedCostUsd <= maxCostPerRunUsd;

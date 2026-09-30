@@ -21,6 +21,9 @@ public static class ApplicationServiceCollectionExtensions
 
         services.AddScoped<IPipelineStep, TextGenerationStep>();
         services.AddScoped<IPipelineStep, ImageGenerationStep>();
+        // VideoGenerationStep must run after ImageGenerationStep (RF-17 AC6); MS.DI
+        // resolves IEnumerable<IPipelineStep> in registration order.
+        services.AddScoped<IPipelineStep, VideoGenerationStep>();
         services.AddScoped<IPipelineStep, PublicationStep>();
 
         services.AddScoped<PipelineOrchestrator>();

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OddOddities.Application.Pipeline;
 using OddOddities.Application.Services;
 using OddOddities.Domain.Constants;
@@ -6,48 +8,48 @@ using OddOddities.Domain.Entities;
 using OddOddities.Domain.Enums;
 using OddOddities.Domain.Exceptions;
 using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
 
 namespace OddOddities.Application.Steps;
 
 /// <summary>
-/// Pipeline step for image generation, processing, and storage (RF-01).
-/// Builds a model candidate chain (preferred + dynamic catalog fallback), generates
-/// the image, processes with ImageSharp (resize, watermark, JPEG), uploads to MinIO,
-/// and updates the Post with image metadata. Each API/model failure advances to the
-/// next candidate model (up to ModelSelection.MaxImageModelAttempts distinct models).
-/// Cost is estimated pre-call against PipelineContext.CostCeilingUsd (resolved once per
-/// run by the orchestrator: ModelSelection.MaxCostPerRunUsd for image runs,
-/// MaxCostPerVideoRunUsd for video runs) and actual usage is accumulated on the
-/// pipeline context. Every generation attempt is persisted to GenerationAttempt.
-/// Business rules: BR-008 (1080x1080 JPEG ~85 with watermark), BR-009 (MinIO quota).
+/// Pipeline step for asynchronous video generation and storage (RF-17).
+/// Mirrors <see cref="ImageGenerationStep"/>: builds a video model candidate chain
+/// (preferred + dynamic catalog fallback), generates the MP4 through the submit/poll/
+/// download flow, enforces the pre-call budget (cost/second x duration) against
+/// PipelineContext.CostCeilingUsd, uploads to MinIO (video/mp4, BR-009 quota) and updates
+/// the Post with video metadata. Each model failure advances to the next candidate
+/// (up to ModelSelection.MaxVideoModelAttempts distinct models) and every attempt is
+/// persisted to GenerationAttempt. Runs only on video executions: on an image run the step
+/// short-circuits with StepResult.Skipped (RF-13/RF-15).
 /// </summary>
-public sealed class ImageGenerationStep : IPipelineStep
+public sealed class VideoGenerationStep : IPipelineStep
 {
-    private readonly IImageGenerationPort _imageGenerationPort;
-    private readonly IImageProcessingPort _imageProcessingPort;
+    private readonly IVideoGenerationPort _videoGenerationPort;
     private readonly IObjectStoragePort _objectStoragePort;
     private readonly IPostRepository _postRepository;
     private readonly IGenerationAttemptRepository _generationAttemptRepository;
     private readonly IModelSelectionService _modelSelection;
-    private readonly ILogger<ImageGenerationStep> _logger;
+    private readonly AppConfiguration _config;
+    private readonly ILogger<VideoGenerationStep> _logger;
 
-    public string StepName => "ImageGeneration";
+    public string StepName => "VideoGeneration";
 
-    public ImageGenerationStep(
-        IImageGenerationPort imageGenerationPort,
-        IImageProcessingPort imageProcessingPort,
+    public VideoGenerationStep(
+        IVideoGenerationPort videoGenerationPort,
         IObjectStoragePort objectStoragePort,
         IPostRepository postRepository,
         IGenerationAttemptRepository generationAttemptRepository,
         IModelSelectionService modelSelection,
-        ILogger<ImageGenerationStep> logger)
+        IOptions<AppConfiguration> config,
+        ILogger<VideoGenerationStep> logger)
     {
-        _imageGenerationPort = imageGenerationPort ?? throw new ArgumentNullException(nameof(imageGenerationPort));
-        _imageProcessingPort = imageProcessingPort ?? throw new ArgumentNullException(nameof(imageProcessingPort));
+        _videoGenerationPort = videoGenerationPort ?? throw new ArgumentNullException(nameof(videoGenerationPort));
         _objectStoragePort = objectStoragePort ?? throw new ArgumentNullException(nameof(objectStoragePort));
         _postRepository = postRepository ?? throw new ArgumentNullException(nameof(postRepository));
         _generationAttemptRepository = generationAttemptRepository ?? throw new ArgumentNullException(nameof(generationAttemptRepository));
         _modelSelection = modelSelection ?? throw new ArgumentNullException(nameof(modelSelection));
+        _config = config?.Value ?? throw new ArgumentNullException(nameof(config));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -56,41 +58,42 @@ public sealed class ImageGenerationStep : IPipelineStep
         PipelineContext context,
         CancellationToken cancellationToken = default)
     {
-        if (context.IsVideoRun)
+        if (!context.IsVideoRun)
         {
-            // Video executions never generate an image (RF-15 modality decision);
-            // the orchestrator logs the skip and continues to the next step.
             _logger.LogInformation(
-                "Skipping image generation: this execution is a video run (ExecutionId={ExecutionId})",
+                "Skipping video generation: this execution is not a video run (ExecutionId={ExecutionId})",
                 context.ExecutionId);
 
             return StepResult.Skipped();
         }
 
         var text = context.Text
-            ?? throw new InvalidOperationException("ImageGenerationStep requires a Text context.");
+            ?? throw new InvalidOperationException("VideoGenerationStep requires a Text context.");
 
         _logger.LogInformation(
-            "Starting image generation for PostId={PostId}, theme={Theme}",
+            "Starting video generation for PostId={PostId}, theme={Theme}",
             text.PostId,
             text.Theme);
 
-        var chain = await _modelSelection.GetImageChainAsync(cancellationToken);
+        var chain = await _modelSelection.GetVideoChainAsync(cancellationToken);
 
         if (chain.Count == 0)
         {
             return StepResult.Failure(
-                FailureStep.ImageGeneration,
-                "No image models available (empty chain and no configured ImageModelId)",
+                FailureStep.VideoGeneration,
+                "No video models available (empty chain and no configured Video.ModelId)",
                 "NO_MODELS_AVAILABLE");
         }
 
-        ImageGenerationResult? generated = null;
+        var durationSeconds = _config.Video.GetEffectiveDurationSeconds();
+
+        VideoGenerationResult? generated = null;
         var attemptNumber = 0;
+        decimal actualCost = 0;
 
         foreach (var candidate in chain)
         {
-            var estimatedCost = ModelCostEstimator.EstimateImageCostPerRequest(candidate);
+            var estimatedCost = ModelCostEstimator.EstimateVideoCostPerRequest(candidate, durationSeconds);
 
             if (!ModelCostEstimator.FitsBudget(
                     context.AccumulatedCostUsd,
@@ -98,31 +101,35 @@ public sealed class ImageGenerationStep : IPipelineStep
                     context.CostCeilingUsd))
             {
                 _logger.LogError(
-                    "Image generation budget exceeded: accumulated={Accumulated} + estimated={Estimated} > max={Max}",
+                    "Video generation budget exceeded: accumulated={Accumulated} + estimated={Estimated} > max={Max}",
                     context.AccumulatedCostUsd,
                     estimatedCost,
                     context.CostCeilingUsd);
 
                 return StepResult.Failure(
-                    FailureStep.ImageGeneration,
-                    $"Image generation budget exceeded: {context.AccumulatedCostUsd} + {estimatedCost} > {context.CostCeilingUsd} USD",
+                    FailureStep.VideoGeneration,
+                    $"Video generation budget exceeded: {context.AccumulatedCostUsd} + {estimatedCost} > {context.CostCeilingUsd} USD",
                     "BUDGET_EXCEEDED");
             }
 
             attemptNumber++;
 
+            var attemptStopwatch = Stopwatch.StartNew();
+
             try
             {
-                generated = await _imageGenerationPort.GenerateImageAsync(
+                generated = await _videoGenerationPort.GenerateVideoAsync(
                     text.Theme,
                     candidate.Id,
                     cancellationToken);
             }
             catch (Exception ex) when (IsModelLevelFailure(ex, cancellationToken))
             {
+                attemptStopwatch.Stop();
+
                 _logger.LogWarning(
                     ex,
-                    "Image model {ModelId} failed on attempt {Attempt}: advancing to next candidate",
+                    "Video model {ModelId} failed on attempt {Attempt}: advancing to next candidate",
                     candidate.Id,
                     attemptNumber);
 
@@ -133,13 +140,15 @@ public sealed class ImageGenerationStep : IPipelineStep
                     AttemptStatus.Error,
                     Truncate(ex.Message, 255),
                     costUsd: null,
-                    durationMs: 0,
+                    attemptStopwatch.ElapsedMilliseconds,
                     cancellationToken);
 
                 continue;
             }
 
-            var actualCost = generated.CostUsd ?? estimatedCost;
+            attemptStopwatch.Stop();
+
+            actualCost = generated.CostUsd ?? estimatedCost;
             context.AccumulatedCostUsd += actualCost;
 
             await RecordAttemptAsync(
@@ -149,14 +158,15 @@ public sealed class ImageGenerationStep : IPipelineStep
                 AttemptStatus.Success,
                 rejectionReason: null,
                 actualCost,
-                generated.DurationMs,
+                attemptStopwatch.ElapsedMilliseconds,
                 cancellationToken);
 
             _logger.LogInformation(
-                "Image generated: PostId={PostId}, ModelId={ModelId}, SizeBytes={SizeBytes}, CostUsd={CostUsd}",
+                "Video generated: PostId={PostId}, ModelId={ModelId}, SizeBytes={SizeBytes}, DurationSeconds={DurationSeconds}, CostUsd={CostUsd}",
                 text.PostId,
                 candidate.Id,
-                generated.ImageBytes.Length,
+                generated.VideoBytes.Length,
+                generated.DurationSeconds,
                 actualCost);
 
             break;
@@ -165,28 +175,18 @@ public sealed class ImageGenerationStep : IPipelineStep
         if (generated is null)
         {
             return StepResult.Failure(
-                FailureStep.ImageGeneration,
-                $"All {chain.Count} image model candidate(s) failed",
+                FailureStep.VideoGeneration,
+                $"All {chain.Count} video model candidate(s) failed",
                 "ALL_MODELS_FAILED");
         }
 
         try
         {
-            var imageData = generated.ImageBytes;
-
-            var processed = await _imageProcessingPort.ProcessImageAsync(
-                imageData,
-                cancellationToken);
-
-            _logger.LogInformation(
-                "Image processed: {Width}x{Height}, format={Format}",
-                processed.Width,
-                processed.Height,
-                processed.Format);
+            var videoBytes = generated.VideoBytes;
 
             var currentUsage = await _objectStoragePort.GetBucketUsageBytesAsync(cancellationToken);
             var quotaBytes = StorageConstants.MinioDefaultQuotaBytes;
-            var newTotal = currentUsage + processed.ImageData.Length;
+            var newTotal = currentUsage + videoBytes.Length;
 
             if (newTotal > quotaBytes)
             {
@@ -197,7 +197,7 @@ public sealed class ImageGenerationStep : IPipelineStep
                     quotaBytes);
 
                 return StepResult.Failure(
-                    FailureStep.ImageStorage,
+                    FailureStep.VideoStorage,
                     $"MinIO quota exceeded: {newTotal} bytes would exceed {quotaBytes} bytes limit",
                     "QUOTA_EXCEEDED");
             }
@@ -205,57 +205,64 @@ public sealed class ImageGenerationStep : IPipelineStep
             var objectKey = Guid.NewGuid().ToString("N");
             await _objectStoragePort.PutObjectAsync(
                 objectKey,
-                processed.ImageData,
-                "image/jpeg",
+                videoBytes,
+                "video/mp4",
                 cancellationToken);
 
             _logger.LogInformation(
-                "Image uploaded to MinIO: key={ObjectKey}, size={SizeBytes}",
+                "Video uploaded to MinIO: key={ObjectKey}, size={SizeBytes}",
                 objectKey,
-                processed.ImageData.Length);
+                videoBytes.Length);
 
             var post = await _postRepository.GetByIdAsync(text.PostId, cancellationToken);
             if (post is null)
             {
-                _logger.LogError("Post {PostId} not found when updating image metadata", text.PostId);
+                _logger.LogError("Post {PostId} not found when updating video metadata", text.PostId);
                 return StepResult.Failure(
-                    FailureStep.ImageStorage,
+                    FailureStep.VideoStorage,
                     $"Post {text.PostId} not found",
                     "POST_NOT_FOUND");
             }
 
-            post.ImageObjectKey = objectKey;
-            post.ImageWidth = processed.Width;
-            post.ImageHeight = processed.Height;
-            post.ImageBytes = processed.ImageData.Length;
+            post.VideoObjectKey = objectKey;
+            post.VideoBytes = videoBytes.Length;
+            post.VideoDurationSeconds = generated.DurationSeconds;
+            // PostStatus.ImageProcessed is reused as "media processed" for video (RF-17,
+            // decision 8.2.5): no enum migration in the MVP.
             post.Status = PostStatus.ImageProcessed;
             post.UpdatedAt = DateTime.UtcNow;
 
             await _postRepository.UpdateAsync(post, cancellationToken);
 
-            context.Image = new ImageContext(
-                ImageObjectKey: objectKey,
-                Width: processed.Width,
-                Height: processed.Height,
-                Bytes: processed.ImageData.Length);
+            context.Video = new VideoContext(
+                ObjectKey: objectKey,
+                Bytes: videoBytes.Length,
+                DurationSeconds: generated.DurationSeconds,
+                CostUsd: actualCost,
+                ModelId: generated.ModelId);
 
             _logger.LogInformation(
-                "Image generation completed successfully: PostId={PostId}, key={ObjectKey}",
+                "Video generation completed successfully: PostId={PostId}, key={ObjectKey}",
                 text.PostId,
                 objectKey);
 
             return StepResult.Success();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Host shutdown: propagate so the orchestrator can stop the run cleanly.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(
                 ex,
-                "Image processing/storage failed for PostId={PostId}",
+                "Video storage failed for PostId={PostId}",
                 text.PostId);
 
             return StepResult.Failure(
-                FailureStep.ImageGeneration,
-                $"Image generation failed: {ex.Message}",
+                FailureStep.VideoGeneration,
+                $"Video generation failed: {ex.Message}",
                 ex.GetType().Name);
         }
     }
@@ -305,7 +312,7 @@ public sealed class ImageGenerationStep : IPipelineStep
             // Audit must never break the generation pipeline.
             _logger.LogWarning(
                 ex,
-                "Failed to record image generation attempt {Attempt} for model {ModelId}",
+                "Failed to record video generation attempt {Attempt} for model {ModelId}",
                 attemptNumber,
                 modelId);
         }

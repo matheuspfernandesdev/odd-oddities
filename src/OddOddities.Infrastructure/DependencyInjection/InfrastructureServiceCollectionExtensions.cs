@@ -71,6 +71,16 @@ public static class InfrastructureServiceCollectionExtensions
             client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
         });
 
+        services.AddHttpClient<IVideoGenerationPort, OpenRouterVideoGenerationAdapter>((sp, client) =>
+        {
+            var config = sp.GetRequiredService<IOptions<AppConfiguration>>().Value.OpenRouter;
+            client.BaseAddress = new Uri(EnsureTrailingSlash(config.BaseUrl));
+            // Video jobs take minutes: per-request timeout must be well above the
+            // submit/poll/download budget (MaxVideoJobPollingAttempts x interval ~15 min).
+            client.Timeout = TimeSpan.FromMinutes(20);
+            client.DefaultRequestHeaders.Add("User-Agent", "OddOddities/1.0");
+        });
+
         services.AddHttpClient<IInstagramPublishingPort, MetaInstagramPublishingAdapter>(client =>
         {
             client.BaseAddress = new Uri("https://graph.instagram.com");
