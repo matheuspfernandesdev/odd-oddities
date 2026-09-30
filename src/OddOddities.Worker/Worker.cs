@@ -6,27 +6,26 @@ namespace OddOddities.Worker;
 
 /// <summary>
 /// Background service that runs the content generation and publishing pipeline.
-/// Uses PeriodicTimer for scheduling and SemaphoreSlim for concurrency control.
+/// Uses PeriodicTimer / delay for scheduling and IPipelineRunner for thread-safe concurrency control.
 /// Implements RF-02: Agendamento de execucoes.
 /// </summary>
 public sealed class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly ISchedulerPort _scheduler;
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IPipelineRunner _pipelineRunner;
     private readonly IClock _clock;
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     public Worker(
         ILogger<Worker> logger,
         ISchedulerPort scheduler,
-        IServiceScopeFactory scopeFactory,
+        IPipelineRunner pipelineRunner,
         IClock clock)
     {
-        _logger = logger;
-        _scheduler = scheduler;
-        _scopeFactory = scopeFactory;
-        _clock = clock;
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
+        _pipelineRunner = pipelineRunner ?? throw new ArgumentNullException(nameof(pipelineRunner));
+        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -35,7 +34,7 @@ public sealed class Worker : BackgroundService
 
         if (_scheduler.ShouldRunNow())
         {
-            await TryExecutePipelineAsync(stoppingToken);
+            await _pipelineRunner.RunAsync(stoppingToken);
         }
 
         while (!stoppingToken.IsCancellationRequested)
@@ -60,42 +59,9 @@ public sealed class Worker : BackgroundService
                 }
             }
 
-            await TryExecutePipelineAsync(stoppingToken);
+            await _pipelineRunner.RunAsync(stoppingToken);
         }
 
         _logger.LogInformation("Worker stopping at {Time}", _clock.UtcNow);
-    }
-
-    private async Task TryExecutePipelineAsync(CancellationToken cancellationToken)
-    {
-        if (!await _semaphore.WaitAsync(0, cancellationToken))
-        {
-            _logger.LogWarning("Pipeline already running, skipping this execution");
-            return;
-        }
-
-        try
-        {
-            await RunPipelineAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Pipeline execution failed");
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
-    }
-
-    private async Task RunPipelineAsync(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Starting pipeline execution at {Time}", _clock.UtcNow);
-
-        using var scope = _scopeFactory.CreateScope();
-        var pipeline = scope.ServiceProvider.GetRequiredService<PipelineOrchestrator>();
-        await pipeline.ExecuteAsync(cancellationToken);
-
-        _logger.LogInformation("Pipeline execution completed at {Time}", _clock.UtcNow);
     }
 }

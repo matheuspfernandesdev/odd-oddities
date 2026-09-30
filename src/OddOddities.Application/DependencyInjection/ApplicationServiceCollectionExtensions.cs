@@ -24,6 +24,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IPipelineStep, PublicationStep>();
 
         services.AddScoped<PipelineOrchestrator>();
+        services.AddSingleton<IPipelineRunner, PipelineRunner>();
 
         return services;
     }

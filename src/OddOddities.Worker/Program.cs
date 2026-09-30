@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using OddOddities.Application.DependencyInjection;
+using OddOddities.Application.Pipeline;
 using OddOddities.Domain.ValueObjects;
 using OddOddities.Infrastructure.Data;
 using OddOddities.Infrastructure.DependencyInjection;
@@ -67,5 +68,34 @@ Log.Information(
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 app.MapHealthChecks("/health");
+
+app.MapPost("/run", async (IPipelineRunner runner, CancellationToken ct) =>
+{
+    var result = await runner.RunAsync(ct);
+
+    return result.Status switch
+    {
+        PipelineRunStatus.Success => Results.Ok(new
+        {
+            status = "Success",
+            executionId = result.ExecutionId,
+            message = "Pipeline executed successfully."
+        }),
+        PipelineRunStatus.AlreadyRunning => Results.Conflict(new
+        {
+            status = "AlreadyRunning",
+            message = "Pipeline is currently running. Request ignored."
+        }),
+        PipelineRunStatus.Failed => Results.Json(
+            new
+            {
+                status = "Failed",
+                executionId = result.ExecutionId,
+                message = $"Pipeline execution failed: {result.FailureReason}"
+            },
+            statusCode: StatusCodes.Status500InternalServerError),
+        _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
+    };
+});
 
 await app.RunAsync();

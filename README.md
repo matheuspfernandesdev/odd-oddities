@@ -22,6 +22,40 @@ Os modelos preferidos e a cadeia de fallback (com limites de custo) sao configur
 - **Retentativas**: conteudo rejeitado re-tenta a geracao ate 3 vezes; erros transitorios de API usam retry com backoff (validacao/rejeicao de negocio nao retenta).
 - **Auditoria**: cada tentativa de geracao e registrada no PostgreSQL (`GenerationAttempt`).
 
+## Acionamento Manual
+
+Alem da execucao automatica agendada pelo worker, voce pode acionar o pipeline manualmente a qualquer momento executando um comando via cURL no container Docker da VPS:
+
+```bash
+docker exec odd-oddities-worker curl -X POST http://localhost:8080/run
+```
+
+### Respostas possiveis:
+
+- **`200 OK` (Sucesso):** O pipeline executou todos os passos com sucesso.
+  ```json
+  {
+    "status": "Success",
+    "executionId": "c3f1a2b4...",
+    "message": "Pipeline executed successfully."
+  }
+  ```
+- **`409 Conflict` (Ja em execucao):** O pipeline ja esta sendo executado no momento (seja por agendamento ou acionamento manual anterior).
+  ```json
+  {
+    "status": "AlreadyRunning",
+    "message": "Pipeline is currently running. Request ignored."
+  }
+  ```
+- **`500 Internal Server Error` (Falha):** Ocorreu um erro durante a execucao do pipeline.
+  ```json
+  {
+    "status": "Failed",
+    "executionId": "c3f1a2b4...",
+    "message": "Pipeline execution failed: <motivo do erro>"
+  }
+  ```
+
 ## Stack
 
 - .NET 8 Worker (arquitetura hexagonal) em Docker

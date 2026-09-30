@@ -410,7 +410,21 @@ A primeira versao nao usa webhooks, SFTP, EDI ou pagamentos.
 
 # Padroes de API
 
-A primeira versao **nao expoe API propria**. O Worker e consumidor de APIs externas.
+O Worker expoe endpoints HTTP internos Minimal API no Kestrel (porta 8080):
+- `GET /health` — Health check do sistema e conexao PostgreSQL.
+- `POST /run` — Endpoint para acionamento manual do pipeline.
+
+## Acionamento Manual (`POST /run`)
+
+Permite acionar a execucao do pipeline via cURL/HTTP no container:
+```bash
+docker exec odd-oddities-worker curl -X POST http://localhost:8080/run
+```
+
+**Respostas:**
+- **200 OK:** Execucao concluida com sucesso. (`{"status": "Success", "executionId": "...", "message": "Pipeline executed successfully."}`)
+- **409 Conflict:** Pipeline ja em execucao (seja por agendamento ou acionamento manual). (`{"status": "AlreadyRunning", "message": "Pipeline is currently running. Request ignored."}`)
+- **500 Internal Server Error:** Falha durante a execucao do pipeline. (`{"status": "Failed", "executionId": "...", "message": "Pipeline execution failed: ..."}`)
 
 ## OpenRouter - Texto
 

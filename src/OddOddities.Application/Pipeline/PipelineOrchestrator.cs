@@ -36,7 +36,7 @@ public sealed class PipelineOrchestrator
     /// Executes the full pipeline: category selection, text generation, validation,
     /// image generation, upload, and publishing.
     /// </summary>
-    public async Task ExecuteAsync(CancellationToken cancellationToken = default)
+    public async Task<PipelineExecutionResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         var executionId = Guid.NewGuid().ToString("N");
 
@@ -90,14 +90,16 @@ public sealed class PipelineOrchestrator
                             result.FailureStepName);
                     }
 
+                    var failureReason = result.FailureReason ?? "Unknown failure";
+
                     await MarkPostAsFailedAsync(
                         context.Text?.PostId ?? 0,
                         result.FailureStep ?? FailureStepMap.FromStepName(step.StepName),
-                        result.FailureReason ?? "Unknown failure",
+                        failureReason,
                         result.ErrorCode,
                         cancellationToken);
 
-                    return;
+                    return PipelineExecutionResult.Failed(executionId, $"Step {step.StepName} failed: {failureReason}");
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -109,7 +111,7 @@ public sealed class PipelineOrchestrator
                     step.StepName,
                     executionId);
 
-                return;
+                return PipelineExecutionResult.Failed(executionId, $"Pipeline cancelled during step {step.StepName}");
             }
             catch (Exception ex)
             {
@@ -124,19 +126,21 @@ public sealed class PipelineOrchestrator
                 }
 
                 var failureStep = FailureStepMap.FromStepName(step.StepName);
+                var failureReason = $"Unexpected error in {step.StepName}: {ex.Message}";
 
                 await MarkPostAsFailedAsync(
                     context.Text?.PostId ?? 0,
                     failureStep,
-                    $"Unexpected error in {step.StepName}: {ex.Message}",
+                    failureReason,
                     ex.GetType().Name,
                     cancellationToken);
 
-                return;
+                return PipelineExecutionResult.Failed(executionId, failureReason);
             }
         }
 
         _logger.LogInformation("Pipeline completed successfully for execution {ExecutionId}", executionId);
+        return PipelineExecutionResult.Success(executionId);
     }
 
     private async Task MarkPostAsFailedAsync(
