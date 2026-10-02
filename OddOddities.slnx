@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OddOddities.Application/OddOddities.Application.csproj" />
+    <Project Path="src/OddOddities.Domain/OddOddities.Domain.csproj" />
+    <Project Path="src/OddOddities.Infrastructure/OddOddities.Infrastructure.csproj" />
+    <Project Path="src/OddOddities.Worker/OddOddities.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OddOddities.UnitTests/OddOddities.UnitTests.csproj" />
+  </Folder>
+</Solution>

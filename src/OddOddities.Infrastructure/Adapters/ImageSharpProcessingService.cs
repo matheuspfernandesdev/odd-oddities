@@ -1,0 +1,143 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using SixLabors.Fonts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing.Processing;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
+
+namespace OddOddities.Infrastructure.Adapters;
+
+/// <summary>
+/// Image processing adapter implementing RF-09 using SixLabors.ImageSharp.
+/// Handles decoding, resizing (1080x1080 with center crop), watermarking, and JPEG encoding.
+/// </summary>
+public sealed class ImageSharpProcessingService : IImageProcessingPort
+{
+    private static readonly string[] PreferredFontFamilies = { "Arial", "Liberation Sans" };
+
+    private readonly ImageProcessingConfiguration _config;
+    private readonly ILogger<ImageSharpProcessingService> _logger;
+
+    public ImageSharpProcessingService(
+        IOptions<ImageProcessingConfiguration> options,
+        ILogger<ImageSharpProcessingService> logger)
+    {
+        _config = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    /// <inheritdoc />
+    public async Task<ImageProcessingResult> ProcessImageAsync(
+        byte[] imageData,
+        CancellationToken cancellationToken = default)
+    {
+        if (imageData == null || imageData.Length == 0)
+        {
+            throw new ArgumentException("Image data cannot be null or empty.", nameof(imageData));
+        }
+
+        _logger.LogInformation(
+            "Starting image processing: input size = {InputSize} bytes",
+            imageData.Length);
+
+        using var image = Image.Load<Rgba32>(imageData);
+
+        _logger.LogDebug(
+            "Image decoded: {Width}x{Height}",
+            image.Width,
+            image.Height);
+
+        var targetSize = new Size(_config.Width, _config.Height);
+        image.Mutate(x => x.Resize(new ResizeOptions
+        {
+            Size = targetSize,
+            Mode = ResizeMode.Crop,
+            Position = AnchorPositionMode.Center
+        }));
+
+        _logger.LogDebug(
+            "Image resized to {Width}x{Height}",
+            image.Width,
+            image.Height);
+
+        AddWatermark(image);
+
+        _logger.LogDebug("Watermark applied");
+
+        using var outputStream = new MemoryStream();
+        await image.SaveAsJpegAsync(
+            outputStream,
+            new JpegEncoder { Quality = _config.Quality },
+            cancellationToken);
+
+        var processedBytes = outputStream.ToArray();
+
+        _logger.LogInformation(
+            "Image processing completed: output size = {OutputSize} bytes, {Width}x{Height}, JPEG quality = {Quality}",
+            processedBytes.Length,
+            _config.Width,
+            _config.Height,
+            _config.Quality);
+
+        return new ImageProcessingResult
+        {
+            ImageData = processedBytes,
+            Width = _config.Width,
+            Height = _config.Height,
+            Format = "jpeg"
+        };
+    }
+
+    private void AddWatermark(Image<Rgba32> image)
+    {
+        var font = CreateWatermarkFont();
+
+        var textOptions = new RichTextOptions(font)
+        {
+            Origin = new PointF(
+                image.Width - 20,
+                image.Height - 30),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom
+        };
+
+        var brush = Brushes.Solid(Color.White.WithAlpha(0.7f));
+
+        image.Mutate(ctx => ctx.DrawText(
+            textOptions,
+            _config.WatermarkText,
+            brush,
+            pen: null));
+    }
+
+    private Font CreateWatermarkFont()
+    {
+        var size = _config.WatermarkFontSize;
+
+        foreach (var familyName in PreferredFontFamilies)
+        {
+            if (SystemFonts.Collection.TryGet(familyName, out var family))
+            {
+                _logger.LogDebug("Watermark font resolved: {FontFamily}", familyName);
+                return family.CreateFont(size, FontStyle.Regular);
+            }
+        }
+
+        foreach (var family in SystemFonts.Families)
+        {
+            _logger.LogWarning(
+                "Preferred watermark fonts ({PreferredFonts}) not found; using first system font: {FontFamily}",
+                string.Join(", ", PreferredFontFamilies),
+                family.Name);
+            return family.CreateFont(size, FontStyle.Regular);
+        }
+
+        throw new InvalidOperationException(
+            "No system font available for the watermark. " +
+            "Install a font package in the container (e.g. fonts-liberation).");
+    }
+}

@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: odd-oddities-postgres-dev
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=odd_oddities
+      - POSTGRES_USER=odd_oddities
+      - POSTGRES_PASSWORD=odd_oddities_dev
+    volumes:
+      - odd_oddities_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odd_oddities -d odd_oddities"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  odd_oddities_pgdata:
+    name: odd_oddities_pgdata

@@ -1,0 +1,278 @@
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using OddOddities.Domain.Interfaces;
+using OddOddities.Domain.ValueObjects;
+
+namespace OddOddities.Infrastructure.Adapters;
+
+/// <summary>
+/// Meta Graph API implementation of IInstagramPublishingPort.
+/// Handles media container creation, publishing, status polling, and token refresh
+/// via the Meta Graph API (RF-01, RF-03).
+/// </summary>
+public sealed class MetaInstagramPublishingAdapter : IInstagramPublishingPort
+{
+    private readonly HttpClient _httpClient;
+    private readonly MetaConfiguration _config;
+    private readonly ILogger<MetaInstagramPublishingAdapter> _logger;
+
+    private const string GraphApiVersion = "v26.0";
+    private const string GraphApiBaseUrl = "https://graph.instagram.com";
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    public MetaInstagramPublishingAdapter(
+        HttpClient httpClient,
+        IOptions<AppConfiguration> options,
+        ILogger<MetaInstagramPublishingAdapter> logger)
+    {
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _config = options?.Value?.Meta ?? throw new ArgumentNullException(nameof(options));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    /// <inheritdoc />
+    public async Task<string> CreateMediaContainerAsync(
+        string imageUrl,
+        string caption,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl))
+            throw new ArgumentException("Image URL cannot be null or empty.", nameof(imageUrl));
+
+        _logger.LogInformation(
+            "Creating media container for Instagram user {InstagramUserId}",
+            _config.InstagramUserId);
+
+        var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{_config.InstagramUserId}/media" +
+                  $"?image_url={Uri.EscapeDataString(imageUrl)}" +
+                  $"&caption={Uri.EscapeDataString(caption)}" +
+                  $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "media", cancellationToken);
+
+        var result = await response.Content.ReadFromJsonAsync<MediaContainerResponse>(
+            JsonOptions, cancellationToken);
+
+        if (string.IsNullOrEmpty(result?.Id))
+        {
+            throw new InvalidOperationException("Meta API returned an empty media container ID.");
+        }
+
+        _logger.LogInformation(
+            "Media container created: mediaId={MediaId}",
+            result.Id);
+
+        return result.Id;
+    }
+
+    /// <inheritdoc />
+    public async Task<string> PublishMediaAsync(
+        string creationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(creationId))
+            throw new ArgumentException("Creation ID cannot be null or empty.", nameof(creationId));
+
+        _logger.LogInformation(
+            "Publishing media container: creationId={CreationId}",
+            creationId);
+
+        var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{_config.InstagramUserId}/media_publish" +
+                  $"?creation_id={Uri.EscapeDataString(creationId)}" +
+                  $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "media_publish", cancellationToken);
+
+        var result = await response.Content.ReadFromJsonAsync<MediaContainerResponse>(
+            JsonOptions, cancellationToken);
+
+        if (string.IsNullOrEmpty(result?.Id))
+        {
+            throw new InvalidOperationException("Meta API returned an empty publish ID.");
+        }
+
+        _logger.LogInformation(
+            "Media published: mediaId={MediaId}",
+            result.Id);
+
+        return result.Id;
+    }
+
+    /// <inheritdoc />
+    public async Task<string> GetContainerStatusAsync(
+        string containerId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(containerId))
+            throw new ArgumentException("Container ID cannot be null or empty.", nameof(containerId));
+
+        var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{containerId}" +
+                  $"?fields=status_code" +
+                  $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "container status", cancellationToken);
+
+        var result = await response.Content.ReadFromJsonAsync<MediaStatusResponse>(
+            JsonOptions, cancellationToken);
+
+        var statusCode = result?.StatusCode ?? "UNKNOWN";
+
+        _logger.LogDebug(
+            "Media container status: containerId={ContainerId}, statusCode={StatusCode}",
+            containerId,
+            statusCode);
+
+        return statusCode;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Published media objects do not expose the <c>status_code</c> field (it only exists on
+    /// media containers); requesting it returns 400 code 100 "Tried accessing nonexisting field".
+    /// A permalink is only assigned once the media is live, so its presence is the success signal.
+    /// </remarks>
+    public async Task<(string Status, string StatusCode, string? Permalink)> GetMediaStatusAsync(
+        string mediaId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId))
+            throw new ArgumentException("Media ID cannot be null or empty.", nameof(mediaId));
+
+        _logger.LogDebug(
+            "Checking media status: mediaId={MediaId}",
+            mediaId);
+
+        var url = $"{GraphApiBaseUrl}/{GraphApiVersion}/{mediaId}" +
+                  $"?fields=permalink" +
+                  $"&access_token={Uri.EscapeDataString(_config.AccessToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "media status", cancellationToken);
+
+        var result = await response.Content.ReadFromJsonAsync<MediaStatusResponse>(
+            JsonOptions, cancellationToken);
+
+        var permalink = result?.Permalink;
+        var status = !string.IsNullOrEmpty(permalink) ? "PUBLISHED" : "PENDING";
+        // status_code is not exposed by published media; keep the constant for the
+        // Publication record so the pipeline outcome stays unambiguous.
+        var statusCode = status;
+
+        _logger.LogDebug(
+            "Media status: mediaId={MediaId}, status={Status}, statusCode={StatusCode}, permalink={Permalink}",
+            mediaId,
+            status,
+            statusCode,
+            permalink);
+
+        return (status, statusCode, permalink);
+    }
+
+    /// <inheritdoc />
+    public async Task<(string NewToken, DateTime ExpiresAt)> RefreshAccessTokenAsync(
+        string currentToken,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(currentToken))
+            throw new ArgumentException("Current token cannot be null or empty.", nameof(currentToken));
+
+        _logger.LogInformation("Refreshing Meta access token");
+
+        var url = $"https://graph.instagram.com/refresh_access_token" +
+                  $"?grant_type=ig_refresh_token" +
+                  $"&access_token={Uri.EscapeDataString(currentToken)}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, "refresh_access_token", cancellationToken);
+
+        var result = await response.Content.ReadFromJsonAsync<TokenRefreshResponse>(
+            JsonOptions, cancellationToken);
+
+        if (string.IsNullOrEmpty(result?.AccessToken))
+        {
+            throw new InvalidOperationException("Meta API returned an empty access token.");
+        }
+
+        var expiresAt = DateTime.UtcNow.AddSeconds(result.ExpiresIn);
+
+        _logger.LogInformation(
+            "Token refreshed successfully: expiresAt={ExpiresAt:O}, expiresIn={ExpiresIn}s",
+            expiresAt,
+            result.ExpiresIn);
+
+        return (result.AccessToken, expiresAt);
+    }
+
+    /// <summary>
+    /// Throws an <see cref="HttpRequestException"/> carrying the Meta error body, so the
+    /// failure reason stored on the Post explains why the API rejected the call.
+    /// </summary>
+    private static async Task EnsureSuccessAsync(
+        HttpResponseMessage response,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        throw new HttpRequestException(
+            $"Meta {operation} failed with {(int)response.StatusCode} ({response.ReasonPhrase}): {errorBody}",
+            null,
+            response.StatusCode);
+    }
+
+    private sealed class MediaContainerResponse
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+    }
+
+    private sealed class MediaStatusResponse
+    {
+        [JsonPropertyName("permalink")]
+        public string? Permalink { get; set; }
+
+        [JsonPropertyName("status_code")]
+        public string? StatusCode { get; set; }
+
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+    }
+
+    private sealed class TokenRefreshResponse
+    {
+        [JsonPropertyName("access_token")]
+        public string? AccessToken { get; set; }
+
+        [JsonPropertyName("token_type")]
+        public string? TokenType { get; set; }
+
+        [JsonPropertyName("expires_in")]
+        public long ExpiresIn { get; set; }
+    }
+}
